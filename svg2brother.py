@@ -114,26 +114,38 @@ def split_long_stitches(
 def hatch_fill(
     polygon: list[tuple[float, float]], spacing_mm: float, max_stitch_mm: float
 ) -> list[list[tuple[float, float]]]:
-    if len(polygon) < 3:
-        return []
-    if distance(polygon[0], polygon[-1]) > 0.01:
-        polygon = [*polygon, polygon[0]]
+    return hatch_compound_fill([polygon], spacing_mm, max_stitch_mm)
 
-    min_y = min(y for _, y in polygon)
-    max_y = max(y for _, y in polygon)
+
+def hatch_compound_fill(
+    polygons: Iterable[list[tuple[float, float]]], spacing_mm: float, max_stitch_mm: float
+) -> list[list[tuple[float, float]]]:
+    closed_polygons: list[list[tuple[float, float]]] = []
+    for polygon in polygons:
+        if len(polygon) < 3:
+            continue
+        if distance(polygon[0], polygon[-1]) > 0.01:
+            polygon = [*polygon, polygon[0]]
+        closed_polygons.append(polygon)
+    if not closed_polygons:
+        return []
+
+    min_y = min(y for polygon in closed_polygons for _, y in polygon)
+    max_y = max(y for polygon in closed_polygons for _, y in polygon)
     rows: list[list[tuple[float, float]]] = []
     y = min_y
     row_index = 0
 
     while y <= max_y:
         xs: list[float] = []
-        for (x1, y1), (x2, y2) in zip(polygon, polygon[1:]):
-            if abs(y1 - y2) < 1e-9:
-                continue
-            crosses = (y1 <= y < y2) or (y2 <= y < y1)
-            if crosses:
-                t = (y - y1) / (y2 - y1)
-                xs.append(x1 + (x2 - x1) * t)
+        for polygon in closed_polygons:
+            for (x1, y1), (x2, y2) in zip(polygon, polygon[1:]):
+                if abs(y1 - y2) < 1e-9:
+                    continue
+                crosses = (y1 <= y < y2) or (y2 <= y < y1)
+                if crosses:
+                    t = (y - y1) / (y2 - y1)
+                    xs.append(x1 + (x2 - x1) * t)
 
         xs.sort()
         for left, right in zip(xs[0::2], xs[1::2]):
@@ -174,12 +186,13 @@ def extract_runs(
         except Exception:
             continue
 
-        for subpath_px in flatten_path(path, sample_step_px):
-            subpath_mm = to_mm(subpath_px)
-            if filled and len(subpath_mm) >= 3:
-                for row in hatch_fill(subpath_mm, fill_spacing_mm, max_stitch_mm):
-                    runs.append(StitchRun(color=color, points_mm=row))
-            else:
+        subpaths_mm = [to_mm(subpath_px) for subpath_px in flatten_path(path, sample_step_px)]
+        if filled:
+            fill_polygons = [subpath_mm for subpath_mm in subpaths_mm if len(subpath_mm) >= 3]
+            for row in hatch_compound_fill(fill_polygons, fill_spacing_mm, max_stitch_mm):
+                runs.append(StitchRun(color=color, points_mm=row))
+        else:
+            for subpath_mm in subpaths_mm:
                 runs.append(
                     StitchRun(
                         color=color,
