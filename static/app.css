@@ -115,7 +115,7 @@ a {
 }
 
 .wide-panel {
-  max-width: 1160px;
+  max-width: 1280px;
 }
 
 h1 {
@@ -226,18 +226,21 @@ button:hover {
 
 .library {
   display: grid;
-  gap: 10px;
+  gap: 8px;
 }
 
 .library-layout {
   display: grid;
-  grid-template-columns: minmax(280px, 420px) minmax(0, 1fr);
+  grid-template-columns: minmax(240px, 360px) minmax(0, 1fr);
   gap: 18px;
   align-items: start;
 }
 
 .library-list {
   min-width: 0;
+  max-height: min(72vh, 720px);
+  overflow: auto;
+  padding-right: 4px;
 }
 
 .preview-panel {
@@ -273,10 +276,10 @@ button:hover {
 
 .library-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 12px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
   align-items: center;
-  padding: 12px;
+  padding: 10px;
   border: 1px solid #e2e7df;
   border-radius: 8px;
   background: #fbfcfa;
@@ -289,16 +292,22 @@ button:hover {
 }
 
 .library-actions {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  justify-content: flex-end;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
 }
 
 .preview-button.active {
   background: #2f6f73;
   color: #ffffff;
   border-color: #2f6f73;
+}
+
+.compact-action {
+  min-height: 34px;
+  padding: 0 8px;
+  font-size: 13px;
+  white-space: nowrap;
 }
 
 .file-name {
@@ -308,14 +317,19 @@ button:hover {
 }
 
 .file-name strong {
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: 14px;
 }
 
 .file-name span {
   color: #66736f;
   font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .empty {
@@ -436,6 +450,12 @@ button:hover {
 
   .library-layout {
     grid-template-columns: 1fr;
+  }
+
+  .library-list {
+    max-height: none;
+    overflow: visible;
+    padding-right: 0;
   }
 
   .preview-panel {

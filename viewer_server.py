@@ -55,9 +55,9 @@ def library_data() -> tuple[str, str, str]:
             f'<div class="file-name"><strong>{html.escape(html_file.stem)}</strong>'
             f'<span>{html.escape(html_file.name)}</span></div>'
             '<div class="library-actions">'
-            f'<button class="button secondary preview-button" type="button" data-preview-url="{preview_url}" data-preview-title="{title}">Preview</button>'
-            f'<a class="button secondary" href="{preview_url}">Open</a>'
-            + (f'<a class="button" href="/viewer_output/{html.escape(pes_file.name, quote=True)}" download>Download PES</a>' if pes_file.exists() else "")
+            f'<button class="button secondary compact-action preview-button" type="button" data-preview-url="{preview_url}" data-preview-title="{title}" title="Preview">View</button>'
+            f'<a class="button secondary compact-action" href="{preview_url}" title="Open full viewer">Open</a>'
+            + (f'<a class="button compact-action" href="/viewer_output/{html.escape(pes_file.name, quote=True)}" download title="Download PES">PES</a>' if pes_file.exists() else "")
             + "</div>"
             + "</div>"
         )
