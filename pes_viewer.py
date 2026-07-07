@@ -378,6 +378,7 @@ def render_thread_plan(color_blocks: list[dict], usage_by_block: dict[int, float
     catalog = load_thread_catalog()
     rows: list[str] = []
     needed: list[str] = []
+    shopping: dict[str, dict] = {}
     total_meters = 0.0
     for block in color_blocks:
         color = block["color"]
@@ -398,6 +399,19 @@ def render_thread_plan(color_blocks: list[dict], usage_by_block: dict[int, float
             detail = "No inventory colors saved yet."
             status_class = "need"
             needed.append(color)
+            if catalog_match is not None:
+                key = catalog_match["number"]
+                shopping.setdefault(
+                    key,
+                    {
+                        "label": catalog_label(catalog_match),
+                        "color": catalog_match["color"],
+                        "meters": 0.0,
+                        "design_colors": set(),
+                    },
+                )
+                shopping[key]["meters"] += meters
+                shopping[key]["design_colors"].add(color)
         else:
             distance = rgb_distance(color, match["color"])
             close_enough = distance <= 64
@@ -411,6 +425,18 @@ def render_thread_plan(color_blocks: list[dict], usage_by_block: dict[int, float
                 needed.append(color)
                 if catalog_match is not None:
                     detail += f"<br>Buy closest Floriani: {catalog_detail}"
+                    key = catalog_match["number"]
+                    shopping.setdefault(
+                        key,
+                        {
+                            "label": catalog_label(catalog_match),
+                            "color": catalog_match["color"],
+                            "meters": 0.0,
+                            "design_colors": set(),
+                        },
+                    )
+                    shopping[key]["meters"] += meters
+                    shopping[key]["design_colors"].add(color)
         rows.append(
             '<tr>'
             f'<td><span class="swatch" style="background:{html.escape(color)}"></span>{html.escape(color)}</td>'
@@ -425,12 +451,40 @@ def render_thread_plan(color_blocks: list[dict], usage_by_block: dict[int, float
         f"Estimated total thread: {format_usage(total_meters)} including 12% allowance. "
         f"Colors to buy: {len(set(needed))}."
     )
+    if shopping:
+        shopping_lines = ["Thread shopping list", ""]
+        for item in sorted(shopping.values(), key=lambda entry: entry["label"]):
+            design_colors = ", ".join(sorted(item["design_colors"]))
+            shopping_lines.append(
+                f'- {item["label"]} ({item["color"]}) - {format_usage(item["meters"])} estimated - for {design_colors}'
+            )
+        shopping_text = "\n".join(shopping_lines)
+        shopping_html = (
+            '<div class="shopping-list">'
+            '<h3>Shopping List</h3>'
+            '<textarea id="shopping-list-text" readonly>'
+            f'{html.escape(shopping_text)}'
+            '</textarea>'
+            '<div class="shopping-actions">'
+            '<button id="copy-shopping-list" type="button">Copy List</button>'
+            '<button id="download-shopping-list" type="button">Download TXT</button>'
+            '</div>'
+            '</div>'
+        )
+    else:
+        shopping_html = (
+            '<div class="shopping-list">'
+            '<h3>Shopping List</h3>'
+            '<p>All design colors have close inventory matches.</p>'
+            '</div>'
+        )
     return (
         '<section class="thread-plan">'
         '<h2>Thread Planning</h2>'
         f'<p>{html.escape(summary)}</p>'
         '<table><thead><tr><th>Design color</th><th>Use</th><th>Status</th><th>Closest inventory match</th><th>Closest Floriani</th></tr></thead>'
         f'<tbody>{"".join(rows)}</tbody></table>'
+        f'{shopping_html}'
         '<a class="inventory-link" href="/inventory">Edit Thread Inventory</a>'
         '</section>'
     )
@@ -673,7 +727,7 @@ def render_html(
     }}
     h1 {{
       margin: 0 0 18px;
-      font-size: 21px;
+      font-size: 19px;
       line-height: 1.2;
       overflow-wrap: anywhere;
     }}
@@ -689,15 +743,19 @@ def render_html(
       gap: 8px;
     }}
     .stats div {{
-      display: flex;
-      justify-content: space-between;
-      gap: 14px;
+      display: grid;
+      grid-template-columns: minmax(96px, 0.8fr) minmax(0, 1.2fr);
+      gap: 10px;
       border-bottom: 1px solid #edf0eb;
       padding-bottom: 8px;
       font-size: 14px;
     }}
     .stats span {{ color: #52605a; }}
-    .stats strong {{ text-align: right; }}
+    .stats strong {{
+      min-width: 0;
+      text-align: right;
+      overflow-wrap: anywhere;
+    }}
     .thread-plan {{
       display: grid;
       gap: 10px;
@@ -706,6 +764,7 @@ def render_html(
       border: 1px solid #d9ded6;
       border-radius: 8px;
       background: #fbfcfa;
+      overflow: auto;
     }}
     .thread-plan h2 {{
       margin-top: 0;
@@ -718,6 +777,7 @@ def render_html(
     }}
     .thread-plan table {{
       width: 100%;
+      min-width: 560px;
       border-collapse: collapse;
       font-size: 12px;
     }}
@@ -749,6 +809,38 @@ def render_html(
     .thread-status.need {{
       background: #fff0df;
       color: #7b3f00;
+    }}
+    .shopping-list {{
+      display: grid;
+      gap: 8px;
+      margin-top: 4px;
+    }}
+    .shopping-list h3 {{
+      margin: 0;
+      font-size: 13px;
+      color: #29332f;
+    }}
+    .shopping-list textarea {{
+      width: 100%;
+      min-height: 118px;
+      resize: vertical;
+      border: 1px solid #cbd4cf;
+      border-radius: 6px;
+      padding: 9px;
+      background: #ffffff;
+      color: #172026;
+      font: 12px Consolas, monospace;
+      line-height: 1.45;
+    }}
+    .shopping-actions {{
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }}
+    .shopping-actions button {{
+      min-height: 32px;
+      padding: 0 8px;
+      font-size: 12px;
     }}
     .inventory-link {{
       color: #2f6f73;
@@ -1220,6 +1312,9 @@ def render_html(
     const zoomReadout = document.getElementById("zoom-readout");
     const viewerMenuToggle = document.getElementById("viewer-menu-toggle");
     const sidebarResizer = document.getElementById("sidebar-resizer");
+    const shoppingListText = document.getElementById("shopping-list-text");
+    const copyShoppingList = document.getElementById("copy-shopping-list");
+    const downloadShoppingList = document.getElementById("download-shopping-list");
     const ctx = toolpath.getContext("2d");
     const segments = JSON.parse(document.getElementById("segment-data").textContent);
     const markerData = JSON.parse(document.getElementById("marker-data").textContent);
@@ -1593,6 +1688,33 @@ def render_html(
     speedSlider.addEventListener("input", () => {{
       speedLabel.textContent = `${{speedSlider.value}} stitches/sec`;
     }});
+    if (copyShoppingList && shoppingListText) {{
+      copyShoppingList.addEventListener("click", async () => {{
+        shoppingListText.select();
+        try {{
+          await navigator.clipboard.writeText(shoppingListText.value);
+          copyShoppingList.textContent = "Copied";
+          window.setTimeout(() => {{
+            copyShoppingList.textContent = "Copy List";
+          }}, 1400);
+        }} catch (error) {{
+          document.execCommand("copy");
+        }}
+      }});
+    }}
+    if (downloadShoppingList && shoppingListText) {{
+      downloadShoppingList.addEventListener("click", () => {{
+        const blob = new Blob([shoppingListText.value], {{ type: "text/plain" }});
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = "thread-shopping-list.txt";
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+      }});
+    }}
     zoomIn.addEventListener("click", () => zoomAt(0.75));
     zoomOut.addEventListener("click", () => zoomAt(1.35));
     zoomReset.addEventListener("click", resetZoom);
