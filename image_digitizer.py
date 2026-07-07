@@ -368,6 +368,8 @@ def image_to_segments(
         "color_changes": 0,
         "ends": 0,
     }
+    previous_point: tuple[float, float] | None = None
+    pending_travel: str | None = None
 
     color_counts: dict[int, int] = {}
     for y in range(working_height):
@@ -391,8 +393,35 @@ def image_to_segments(
         y2: float,
         row_index: int,
     ) -> None:
+        nonlocal previous_point, pending_travel
+        if previous_point is not None and math.hypot(previous_point[0] - x1, previous_point[1] - y1) > 0.001:
+            if pending_travel:
+                commands.append(
+                    {
+                        "x": previous_point[0],
+                        "y": previous_point[1],
+                        "command": "color_change",
+                        "color": block["thread"],
+                        "step": counts["needle_points"],
+                    }
+                )
+            commands.append({"x": x1, "y": y1, "command": "jump", "color": block["thread"], "step": counts["needle_points"]})
+            counts["jumps"] += 1
+            segments.append(
+                {
+                    "x1": previous_point[0],
+                    "y1": previous_point[1],
+                    "x2": x1,
+                    "y2": y1,
+                    "kind": pending_travel or "jump",
+                    "color": block["color"],
+                    "colorIndex": block["thread"],
+                    "blockIndex": block["index"],
+                    "step": counts["needle_points"],
+                }
+            )
+            pending_travel = None
         commands.append({"x": x1, "y": y1, "command": "jump", "color": block["thread"], "step": counts["needle_points"]})
-        counts["jumps"] += 1
         span = math.hypot(x2 - x1, y2 - y1)
         if span <= 0.001:
             return
@@ -433,6 +462,7 @@ def image_to_segments(
             commands.append({"x": x, "y": y, "command": "stitch", "color": block["thread"], "step": counts["needle_points"]})
             last_x = x
             last_y = y
+            previous_point = (x, y)
 
     for palette_index in color_order:
         if palette_index >= len(colors):
@@ -452,6 +482,7 @@ def image_to_segments(
         color_blocks.append(block)
         if block["index"] > 0:
             counts["color_changes"] += 1
+            pending_travel = "travel_after_color_change"
 
         for row in range(working_height):
             ranges: list[tuple[int, int]] = []

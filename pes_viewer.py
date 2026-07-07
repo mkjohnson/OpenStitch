@@ -24,6 +24,12 @@ DEFAULT_COLORS = [
     "#e377c2",
     "#17becf",
 ]
+SEGMENT_KIND_CODES = {
+    "jump": 0,
+    "stitch": 1,
+    "travel_after_trim": 2,
+    "travel_after_color_change": 3,
+}
 
 
 def command_name(command: int) -> str:
@@ -66,6 +72,7 @@ def collect_segments(pattern) -> tuple[list[dict], list[dict], list[dict], dict]
     color_blocks: list[dict] = []
     color_index = 0
     previous: tuple[float, float] | None = None
+    pending_travel: str | None = None
     active_block: dict | None = None
     counts = {
         "needle_points": 0,
@@ -108,6 +115,7 @@ def collect_segments(pattern) -> tuple[list[dict], list[dict], list[dict], dict]
             color_index += 1
             active_block = None
             previous = (x, y)
+            pending_travel = "travel_after_color_change"
             continue
         if command == embroidery.END:
             counts["ends"] += 1
@@ -115,18 +123,20 @@ def collect_segments(pattern) -> tuple[list[dict], list[dict], list[dict], dict]
         if command == embroidery.TRIM:
             counts["trims"] += 1
             previous = (x, y)
+            pending_travel = "travel_after_trim"
             continue
 
         if previous is not None and command in {embroidery.STITCH, embroidery.JUMP}:
             is_stitch = command == embroidery.STITCH
             block = ensure_block()
+            segment_kind = "stitch" if is_stitch else pending_travel or "jump"
             segments.append(
                 {
                     "x1": previous[0],
                     "y1": previous[1],
                     "x2": x,
                     "y2": y,
-                    "kind": "stitch" if is_stitch else "jump",
+                    "kind": segment_kind,
                     "color": block["color"],
                     "colorIndex": color_index,
                     "blockIndex": block["index"],
@@ -141,6 +151,7 @@ def collect_segments(pattern) -> tuple[list[dict], list[dict], list[dict], dict]
                 stitch_step = counts["needle_points"]
                 counts["jumps"] += 1
             segments[-1]["step"] = stitch_step
+            pending_travel = None
 
         previous = (x, y)
 
@@ -479,7 +490,7 @@ def render_html(
             round(segment["y1"], 3),
             round(segment["x2"], 3),
             round(segment["y2"], 3),
-            1 if segment["kind"] == "stitch" else 0,
+            SEGMENT_KIND_CODES.get(segment["kind"], 0),
             segment["blockIndex"],
             segment["step"],
         ]
@@ -1157,6 +1168,11 @@ def render_html(
       trim: {{ fill: "#f97316", stroke: "#7c2d12" }},
       color_change: {{ fill: "#2563eb", stroke: "#172554" }},
     }};
+    const travelColors = {{
+      0: {{ stroke: "#66736f", alpha: 0.45, dash: [5, 4] }},
+      2: {{ stroke: "#f97316", alpha: 0.78, dash: [7, 4, 2, 4] }},
+      3: {{ stroke: "#2563eb", alpha: 0.78, dash: [7, 4, 2, 4] }},
+    }};
     const thumbnailMode = new URLSearchParams(window.location.search).get("embed") === "thumbnail";
     if (thumbnailMode) {{
       document.body.classList.add("thumbnail-mode", "hide-jumps", "hide-markers");
@@ -1233,11 +1249,12 @@ def render_html(
         if (!selectedBlocks.has(segment[5])) continue;
         const isStitch = segment[4] === 1;
         if (!isStitch && !showJumps) continue;
+        const travelStyle = travelColors[segment[4]] || travelColors[0];
         ctx.beginPath();
-        ctx.strokeStyle = isStitch ? palette[segment[5]] : "#66736f";
-        ctx.globalAlpha = isStitch ? 1 : 0.45;
+        ctx.strokeStyle = isStitch ? palette[segment[5]] : travelStyle.stroke;
+        ctx.globalAlpha = isStitch ? 1 : travelStyle.alpha;
         ctx.lineWidth = isStitch ? stitchWidth : jumpWidth;
-        if (!isStitch) ctx.setLineDash([deviceScale * 5, deviceScale * 4]);
+        if (!isStitch) ctx.setLineDash(travelStyle.dash.map((value) => value * deviceScale));
         else ctx.setLineDash([]);
         ctx.moveTo(toCanvasX(segment[0]), toCanvasY(segment[1]));
         ctx.lineTo(toCanvasX(segment[2]), toCanvasY(segment[3]));
@@ -1589,6 +1606,8 @@ def collect_svg_segments(
     color_blocks: list[dict] = []
     active_color: str | None = None
     active_block: dict | None = None
+    previous_point: tuple[float, float] | None = None
+    pending_travel: str | None = None
     counts = {
         "needle_points": 0,
         "stitch_segments": 0,
@@ -1613,6 +1632,7 @@ def collect_svg_segments(
                         "step": counts["needle_points"],
                     }
                 )
+                pending_travel = "travel_after_color_change"
             active_color = run.color
             active_block = {
                 "index": len(color_blocks),
@@ -1625,6 +1645,22 @@ def collect_svg_segments(
 
         assert active_block is not None
         first = run.points_mm[0]
+        if previous_point is not None and math.hypot(previous_point[0] - first[0], previous_point[1] - first[1]) > 0.001:
+            counts["jumps"] += 1
+            segments.append(
+                {
+                    "x1": previous_point[0],
+                    "y1": previous_point[1],
+                    "x2": first[0],
+                    "y2": first[1],
+                    "kind": pending_travel or "jump",
+                    "color": active_block["color"],
+                    "colorIndex": active_block["thread"],
+                    "blockIndex": active_block["index"],
+                    "step": counts["needle_points"],
+                }
+            )
+            pending_travel = None
         commands.append(
             {
                 "x": first[0],
@@ -1660,6 +1696,7 @@ def collect_svg_segments(
                     "step": counts["needle_points"],
                 }
             )
+            previous_point = end
 
     if not segments:
         raise ValueError("No stitches were generated from the SVG.")
