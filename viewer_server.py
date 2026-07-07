@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import cgi
 import html
+import json
 import re
 import uuid
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -11,7 +12,7 @@ from urllib.parse import unquote, urlparse
 
 from image_digitizer import is_raster_source, write_image_as_pes
 from pes_viewer import build_viewer_html, positive_float, write_filtered_pes, write_svg_as_pes
-from thread_inventory import add_inventory_item, delete_inventory_item, load_inventory
+from thread_inventory import add_inventory_item, delete_inventory_item, load_inventory, normalize_hex
 
 
 OUTPUT_DIR = Path("viewer_output")
@@ -313,6 +314,15 @@ class ViewerHandler(SimpleHTTPRequestHandler):
         except ValueError:
             self.send_app_error("Color order was invalid")
             return
+        try:
+            raw_overrides = json.loads(form["color_overrides"].value) if "color_overrides" in form and form["color_overrides"].value else {}
+            color_overrides = {
+                int(block_index): normalize_hex(str(color))
+                for block_index, color in raw_overrides.items()
+            }
+        except (TypeError, ValueError, json.JSONDecodeError):
+            self.send_app_error("Color overrides were invalid")
+            return
 
         fit_width = None
         if "fit_width_mm" in form and form["fit_width_mm"].value:
@@ -344,6 +354,7 @@ class ViewerHandler(SimpleHTTPRequestHandler):
                 output_path,
                 selected_blocks,
                 color_order=color_order,
+                color_overrides=color_overrides,
                 fit_width_mm=fit_width,
                 max_colors=max_colors,
                 color_merge_distance=color_merge_distance,

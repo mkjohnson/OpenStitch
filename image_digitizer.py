@@ -12,6 +12,7 @@ import pyembroidery as embroidery
 from PIL import Image, ImageChops, ImageOps
 
 from svg2brother import EMB_UNITS_PER_MM, make_thread
+from thread_inventory import hex_to_rgb, load_inventory
 
 
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tif", ".tiff", ".webp"}
@@ -168,6 +169,63 @@ def merge_similar_palette_colors(
     return palette_image.point(lookup), [group["color"] for group in groups]
 
 
+def snap_palette_to_inventory_threads(
+    palette_image: Image.Image,
+    colors: list[tuple[int, int, int]],
+    match_distance: float = 64.0,
+    background_threshold: int = 245,
+) -> tuple[Image.Image, list[tuple[int, int, int]]]:
+    if match_distance <= 0:
+        return palette_image, colors
+    inventory = load_inventory()
+    if not inventory:
+        return palette_image, colors
+
+    inventory_colors = [
+        (item, hex_to_rgb(item["color"]))
+        for item in inventory
+    ]
+    counts = palette_image.histogram()
+    groups: list[dict] = []
+    group_by_key: dict[tuple[str, str], int] = {}
+    old_to_new: dict[int, int] = {}
+
+    for index, color in enumerate(colors):
+        if index >= len(counts) or counts[index] == 0:
+            continue
+        if is_background_color(color, background_threshold):
+            key = ("palette", str(index))
+            target_color = color
+        else:
+            match_item = None
+            match_color = None
+            match_distance_value = match_distance
+            for item, inventory_color in inventory_colors:
+                distance = color_distance(color, inventory_color)
+                if distance <= match_distance_value:
+                    match_item = item
+                    match_color = inventory_color
+                    match_distance_value = distance
+            if match_item is None or match_color is None:
+                key = ("palette", str(index))
+                target_color = color
+            else:
+                key = ("inventory", match_item["id"])
+                target_color = match_color
+
+        if key not in group_by_key:
+            group_by_key[key] = len(groups)
+            groups.append({"color": target_color, "count": counts[index]})
+        else:
+            groups[group_by_key[key]]["count"] += counts[index]
+        old_to_new[index] = group_by_key[key]
+
+    if not groups:
+        return palette_image, colors
+    lookup = [old_to_new.get(index, 0) for index in range(256)]
+    return palette_image.point(lookup), [group["color"] for group in groups]
+
+
 def quantized_pixels(
     image: Image.Image,
     max_colors: int,
@@ -218,7 +276,11 @@ def quantized_pixels(
     indexed = Image.new("L", rgb.size)
     indexed.putdata([nearest_index(pixel) for pixel in source_pixels])
     indexed, merged_colors = merge_similar_palette_colors(indexed, [*colors, (255, 255, 255)], color_merge_distance)
-    return indexed, merged_colors
+    return snap_palette_to_inventory_threads(
+        indexed,
+        merged_colors,
+        background_threshold=background_threshold,
+    )
 
 
 def image_to_segments(

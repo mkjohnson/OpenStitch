@@ -10,7 +10,7 @@ import pyembroidery as embroidery
 
 from image_digitizer import image_to_segments, is_raster_source, svg_needs_rasterization, write_image_as_pes
 from svg2brother import extract_runs, transform_runs, positive_float, write_embroidery, make_thread
-from thread_inventory import closest_inventory_match, load_inventory, rgb_distance
+from thread_inventory import closest_inventory_match, load_inventory, normalize_hex, rgb_distance
 
 
 EMB_UNITS_PER_MM = 10.0
@@ -253,6 +253,75 @@ def inventory_label(item: dict) -> str:
     return label or item["color"]
 
 
+def render_inventory_options() -> str:
+    options = ['<option value="">Known thread colors</option>']
+    for item in load_inventory():
+        label = f'{inventory_label(item)} - {item["color"]}'
+        options.append(
+            '<option value="{color}">{label}</option>'.format(
+                color=html.escape(item["color"], quote=True),
+                label=html.escape(label),
+            )
+        )
+    return "".join(options)
+
+
+def group_color_blocks_by_inventory(
+    segments: list[dict],
+    commands: list[dict],
+    color_blocks: list[dict],
+    counts: dict,
+    match_distance: float = 64.0,
+) -> tuple[list[dict], list[dict], list[dict], dict]:
+    inventory = load_inventory()
+    if not inventory or match_distance <= 0:
+        return segments, commands, color_blocks, counts
+
+    block_map: dict[int, int] = {}
+    grouped_blocks: list[dict] = []
+    group_by_key: dict[tuple[str, str], int] = {}
+    for block in color_blocks:
+        color = block["color"]
+        match = closest_inventory_match(color, inventory)
+        if match is not None and rgb_distance(color, match["color"]) <= match_distance:
+            key = ("inventory", match["id"])
+            display_color = match["color"]
+            label = f"Inventory {inventory_label(match)}"
+        else:
+            key = ("design", str(block["index"]))
+            display_color = color
+            label = block.get("label", f"Design {color}")
+
+        if key not in group_by_key:
+            group_by_key[key] = len(grouped_blocks)
+            grouped_blocks.append(
+                {
+                    "index": len(grouped_blocks),
+                    "thread": len(grouped_blocks),
+                    "color": display_color,
+                    "label": label,
+                    "stitches": 0,
+                }
+            )
+        block_map[block["index"]] = group_by_key[key]
+
+    for segment in segments:
+        new_index = block_map.get(segment["blockIndex"], segment["blockIndex"])
+        segment["blockIndex"] = new_index
+        segment["colorIndex"] = new_index
+        segment["color"] = grouped_blocks[new_index]["color"]
+        if segment["kind"] == "stitch":
+            grouped_blocks[new_index]["stitches"] += 1
+
+    for command in commands:
+        if "color" in command:
+            command["color"] = block_map.get(command["color"], command["color"])
+
+    counts = dict(counts)
+    counts["color_changes"] = max(0, len(grouped_blocks) - 1)
+    return segments, commands, grouped_blocks, counts
+
+
 def render_thread_plan(color_blocks: list[dict], usage_by_block: dict[int, float]) -> str:
     inventory = load_inventory()
     rows: list[str] = []
@@ -305,6 +374,7 @@ def render_thread_plan(color_blocks: list[dict], usage_by_block: dict[int, float
 
 def render_legend(pattern, color_blocks: list[dict], color_controls: bool = False) -> str:
     items: list[str] = []
+    inventory_options = render_inventory_options() if color_controls else ""
     for block in color_blocks:
         index = block["thread"]
         color = block["color"]
@@ -326,11 +396,26 @@ def render_legend(pattern, color_blocks: list[dict], color_controls: bool = Fals
                 '<button class="order-button" type="button" data-order-move="down" aria-label="Move color later">Down</button>'
                 '</span>'
             )
+        color_editor = ""
+        if color_controls:
+            color_editor = (
+                '<span class="block-color-controls">'
+                '<input class="block-color-input" type="text" value="{color}" '
+                'data-block-color="{index}" aria-label="Thread hex color for block {label_index}">'
+                '<select class="block-thread-select" data-block-select="{index}" '
+                'aria-label="Known thread color for block {label_index}">{options}</select>'
+                '</span>'
+            ).format(
+                color=html.escape(color, quote=True),
+                index=block["index"],
+                label_index=block["index"] + 1,
+                options=inventory_options,
+            )
         items.append(
             f'<li data-block-row="{block["index"]}"><span class="swatch" style="background:{html.escape(color)}"></span>'
             f'<span>{checkbox}Block {block["index"] + 1}: {label}'
             f'<small>{block["stitches"]} stitches</small></span>'
-            f'<code>{html.escape(color)}</code>{reorder}</li>'
+            f'<code>{html.escape(color)}</code>{color_editor}{reorder}</li>'
         )
     return "\n          ".join(items)
 
@@ -430,6 +515,7 @@ def render_html(
             '<input type="hidden" name="pdf_page" value="{pdf_page}">'
             '<input id="selected-blocks" type="hidden" name="selected_blocks" value="">'
             '<input id="color-order" type="hidden" name="color_order" value="">'
+            '<input id="color-overrides" type="hidden" name="color_overrides" value="">'
         ).format(
             action=html.escape(color_export_action, quote=True),
             source=html.escape(source_name, quote=True),
@@ -678,7 +764,7 @@ def render_html(
     }}
     li {{
       display: grid;
-      grid-template-columns: 18px minmax(0, 1fr) auto auto;
+      grid-template-columns: 18px minmax(0, 1fr);
       align-items: center;
       gap: 9px;
       font-size: 13px;
@@ -687,6 +773,35 @@ def render_html(
       display: grid;
       gap: 2px;
       min-width: 0;
+    }}
+    li code {{
+      grid-column: 2;
+      width: fit-content;
+    }}
+    .block-color-controls {{
+      grid-column: 2;
+      display: grid;
+      grid-template-columns: minmax(82px, 0.55fr) minmax(110px, 1fr);
+      gap: 6px;
+      min-width: 0;
+    }}
+    .block-color-input,
+    .block-thread-select {{
+      width: 100%;
+      min-height: 30px;
+      border: 1px solid #cbd4cf;
+      border-radius: 6px;
+      background: #fbfcfa;
+      color: #172026;
+      font: inherit;
+      font-size: 12px;
+    }}
+    .block-color-input {{
+      padding: 0 7px;
+      font-family: Consolas, monospace;
+    }}
+    .block-thread-select {{
+      padding: 0 6px;
     }}
     .viewer-menu {{
       position: fixed;
@@ -741,6 +856,7 @@ def render_html(
       vertical-align: -2px;
     }}
     .block-order-controls {{
+      grid-column: 2;
       display: grid;
       grid-template-columns: repeat(2, 1fr);
       gap: 4px;
@@ -924,8 +1040,11 @@ def render_html(
     const blockToggles = [...document.querySelectorAll(".block-toggle")];
     const selectedBlocksInput = document.getElementById("selected-blocks");
     const colorOrderInput = document.getElementById("color-order");
+    const colorOverridesInput = document.getElementById("color-overrides");
     const threadList = document.querySelector(".color-export ul");
     const orderButtons = [...document.querySelectorAll("[data-order-move]")];
+    const colorInputs = [...document.querySelectorAll("[data-block-color]")];
+    const threadSelects = [...document.querySelectorAll("[data-block-select]")];
     let selectedBlocks = new Set(blockToggles.map((toggle) => Number(toggle.value)));
     const maxStep = {max_step};
     const initialViewBox = JSON.parse(toolpath.dataset.initialViewbox);
@@ -1070,6 +1189,46 @@ def render_html(
       if (colorOrderInput) {{
         colorOrderInput.value = orderedBlocks.join(",");
       }}
+      syncColorOverrides();
+      renderScene();
+    }}
+
+    function normalizeHex(value) {{
+      const text = value.trim();
+      const full = /^#[0-9a-f]{{6}}$/i;
+      const short = /^#[0-9a-f]{{3}}$/i;
+      if (full.test(text)) return text.toLowerCase();
+      if (short.test(text)) {{
+        return "#" + [...text.slice(1)].map((char) => char + char).join("").toLowerCase();
+      }}
+      return null;
+    }}
+
+    function syncColorOverrides() {{
+      if (!colorOverridesInput) return;
+      const overrides = {{}};
+      for (const input of colorInputs) {{
+        const blockIndex = Number(input.dataset.blockColor);
+        const color = normalizeHex(input.value);
+        if (color) overrides[blockIndex] = color;
+      }}
+      colorOverridesInput.value = JSON.stringify(overrides);
+    }}
+
+    function applyBlockColor(blockIndex, color) {{
+      const normalized = normalizeHex(color);
+      if (!normalized) return;
+      palette[blockIndex] = normalized;
+      const row = document.querySelector(`[data-block-row="${{blockIndex}}"]`);
+      if (row) {{
+        const swatch = row.querySelector(".swatch");
+        const code = row.querySelector("code");
+        const input = row.querySelector("[data-block-color]");
+        if (swatch) swatch.style.background = normalized;
+        if (code) code.textContent = normalized;
+        if (input) input.value = normalized;
+      }}
+      syncColorOverrides();
       renderScene();
     }}
 
@@ -1206,6 +1365,23 @@ def render_html(
     }}
     for (const button of orderButtons) {{
       button.addEventListener("click", () => moveColorBlock(button));
+    }}
+    for (const input of colorInputs) {{
+      input.addEventListener("change", () => {{
+        const color = normalizeHex(input.value);
+        if (color) {{
+          applyBlockColor(Number(input.dataset.blockColor), color);
+        }} else {{
+          input.value = palette[Number(input.dataset.blockColor)];
+        }}
+      }});
+    }}
+    for (const select of threadSelects) {{
+      select.addEventListener("change", () => {{
+        if (select.value) {{
+          applyBlockColor(Number(select.dataset.blockSelect), select.value);
+        }}
+      }});
     }}
     window.addEventListener("resize", resizeCanvas);
     syncSelectedBlocks();
@@ -1443,6 +1619,13 @@ def build_viewer_html(
         segments, commands, color_blocks, counts = collect_segments(pattern)
         source_label = input_file.suffix.upper().lstrip(".") or "Embroidery file"
 
+    segments, commands, color_blocks, counts = group_color_blocks_by_inventory(
+        segments,
+        commands,
+        color_blocks,
+        counts,
+    )
+
     html_text = render_html(
         input_file,
         pattern,
@@ -1468,6 +1651,7 @@ def write_segments_as_pes(
     output_file: Path,
     selected_blocks: set[int] | None = None,
     color_order: list[int] | None = None,
+    color_overrides: dict[int, str] | None = None,
 ) -> None:
     selected_blocks = selected_blocks if selected_blocks is not None else {
         block["index"] for block in color_blocks
@@ -1499,7 +1683,8 @@ def write_segments_as_pes(
                 continue
             if block_index != active_block:
                 block = color_blocks[block_index]
-                pattern.add_thread(make_thread(block["color"]))
+                color = color_overrides.get(block_index, block["color"]) if color_overrides else block["color"]
+                pattern.add_thread(make_thread(normalize_hex(color)))
                 if active_block is not None:
                     pattern.color_change()
                 active_block = block_index
@@ -1535,6 +1720,7 @@ def write_filtered_pes(
     output_file: Path,
     selected_blocks: set[int],
     color_order: list[int] | None = None,
+    color_overrides: dict[int, str] | None = None,
     *,
     fit_width_mm: float | None = None,
     fit_height_mm: float | None = None,
@@ -1575,7 +1761,20 @@ def write_filtered_pes(
         if pattern is None:
             raise ValueError(f"Could not read embroidery file: {input_file}")
         segments, _, color_blocks, _ = collect_segments(pattern)
-    write_segments_as_pes(segments, color_blocks, output_file, selected_blocks, color_order)
+    segments, _, color_blocks, _ = group_color_blocks_by_inventory(
+        segments,
+        [],
+        color_blocks,
+        {},
+    )
+    write_segments_as_pes(
+        segments,
+        color_blocks,
+        output_file,
+        selected_blocks,
+        color_order,
+        color_overrides,
+    )
 
 
 def write_svg_as_pes(
