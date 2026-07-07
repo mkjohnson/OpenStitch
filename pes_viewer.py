@@ -1152,29 +1152,49 @@ def render_html(
       position: absolute;
       top: 46px;
       right: 0;
-      width: 220px;
+      width: min(720px, calc(100vw - 24px));
+      max-height: calc(100vh - 72px);
       display: none;
-      gap: 6px;
-      padding: 8px;
+      gap: 10px;
+      padding: 10px;
       border: 1px solid #d9ded6;
       border-radius: 8px;
       background: #ffffff;
       box-shadow: 0 12px 28px rgba(23, 32, 38, 0.18);
+      overflow: auto;
     }}
     body.viewer-menu-open .viewer-menu-panel {{
       display: grid;
     }}
+    .viewer-menu-actions {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+      gap: 6px;
+    }}
     .viewer-menu-panel a {{
       min-height: 36px;
       display: flex;
+      justify-content: center;
       align-items: center;
       padding: 0 10px;
+      border: 1px solid #c9d2cd;
       border-radius: 6px;
       color: #26332f;
       text-decoration: none;
+      font-size: 13px;
+      font-weight: 700;
+      text-align: center;
     }}
     .viewer-menu-panel a:hover {{
       background: #eaf2ef;
+    }}
+    .viewer-menu-panel .download-action {{
+      width: auto;
+      margin: 0;
+    }}
+    .viewer-menu-panel .thread-plan {{
+      margin: 0;
+      max-height: none;
     }}
     .block-toggle {{
       width: 16px;
@@ -1330,19 +1350,21 @@ def render_html(
 <body class="has-thread-floater" data-stats="{embedded_stats}">
   <div class="viewer-menu">
     <button id="viewer-menu-toggle" class="viewer-menu-button" type="button" aria-label="Open menu">&#9776;</button>
-    <nav class="viewer-menu-panel" aria-label="Application menu">
-      <a href="/">Convert Another</a>
-      <a href="/library">Library</a>
-      <a href="/inventory">Thread Inventory</a>
-      {pes_download}
-    </nav>
+    <div class="viewer-menu-panel" aria-label="Application menu">
+      <nav class="viewer-menu-actions" aria-label="Application actions">
+        <a href="/">Convert Another</a>
+        <a href="/library">Library</a>
+        <a href="/inventory">Thread Inventory</a>
+        {pes_download}
+      </nav>
+      {thread_plan}
+    </div>
   </div>
   <aside>
     <h1>{html.escape(input_file.name)}</h1>
     <section class="stats">
       {stats_html}
     </section>
-    {thread_plan}
     {pes_download}
     <section class="playback" aria-label="Stitch playback controls">
       <div class="transport">
