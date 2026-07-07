@@ -215,6 +215,18 @@ button:hover {
   background: #eef4f1;
 }
 
+.button.danger,
+button.danger {
+  border-color: #b86b63;
+  background: #ffffff;
+  color: #8a322b;
+}
+
+.button.danger:hover,
+button.danger:hover {
+  background: #fff0ef;
+}
+
 .swatch {
   width: 16px;
   height: 16px;
@@ -268,7 +280,7 @@ button:hover {
 
 .preview-frame {
   width: 100%;
-  height: min(72vh, 720px);
+  height: min(42vh, 420px);
   border: 1px solid #d9ded6;
   border-radius: 8px;
   background: #ffffff;
@@ -293,8 +305,17 @@ button:hover {
 
 .library-actions {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 6px;
+}
+
+.library-actions form {
+  min-width: 0;
+}
+
+.library-actions .button,
+.library-actions button {
+  width: 100%;
 }
 
 .preview-button.active {
@@ -463,7 +484,7 @@ button:hover {
   }
 
   .preview-frame {
-    height: 68vh;
+    height: 56vh;
   }
 
   .library-actions {

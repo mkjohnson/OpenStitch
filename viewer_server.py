@@ -18,6 +18,8 @@ from thread_inventory import add_inventory_item, delete_inventory_item, load_inv
 OUTPUT_DIR = Path("viewer_output")
 TEMPLATE_DIR = Path("templates")
 STATIC_DIR = Path("static")
+MIN_BROTHER_STITCH_MM = 0.5
+MAX_BROTHER_EMBROIDERY_STITCH_MM = 7.0
 
 
 def safe_name(name: str) -> str:
@@ -34,6 +36,18 @@ def render_template(name: str, **context: str) -> bytes:
     return text.encode("utf-8")
 
 
+def parse_max_stitch(form: cgi.FieldStorage, default: float = 3.0) -> float:
+    if "max_stitch_mm" not in form or not form["max_stitch_mm"].value:
+        return default
+    try:
+        max_stitch = positive_float(form["max_stitch_mm"].value)
+    except Exception as error:
+        raise ValueError("Max stitch length must be greater than zero") from error
+    if max_stitch < MIN_BROTHER_STITCH_MM or max_stitch > MAX_BROTHER_EMBROIDERY_STITCH_MM:
+        raise ValueError("Max stitch length must be between 0.5 and 7.0 mm")
+    return max_stitch
+
+
 def library_data() -> tuple[str, str, str]:
     OUTPUT_DIR.mkdir(exist_ok=True)
     html_files = sorted(OUTPUT_DIR.glob("*.html"), key=lambda path: path.stat().st_mtime, reverse=True)
@@ -44,11 +58,12 @@ def library_data() -> tuple[str, str, str]:
             '<div class="empty">Convert a design to see a live preview here.</div>',
         )
     rows: list[str] = ['<div class="library">']
-    first_preview = f"/viewer_output/{html.escape(html_files[0].name, quote=True)}"
+    first_preview = f"/viewer_output/{html.escape(html_files[0].name, quote=True)}?embed=thumbnail"
     first_title = html.escape(html_files[0].stem)
     for html_file in html_files:
         pes_file = html_file.with_suffix(".pes")
-        preview_url = f"/viewer_output/{html.escape(html_file.name, quote=True)}"
+        full_url = f"/viewer_output/{html.escape(html_file.name, quote=True)}"
+        preview_url = f"{full_url}?embed=thumbnail"
         title = html.escape(html_file.stem)
         rows.append(
             '<div class="library-row">'
@@ -56,8 +71,14 @@ def library_data() -> tuple[str, str, str]:
             f'<span>{html.escape(html_file.name)}</span></div>'
             '<div class="library-actions">'
             f'<button class="button secondary compact-action preview-button" type="button" data-preview-url="{preview_url}" data-preview-title="{title}" title="Preview">View</button>'
-            f'<a class="button secondary compact-action" href="{preview_url}" title="Open full viewer">Open</a>'
+            f'<a class="button secondary compact-action" href="{full_url}" title="Open full viewer">Open</a>'
             + (f'<a class="button compact-action" href="/viewer_output/{html.escape(pes_file.name, quote=True)}" download title="Download PES">PES</a>' if pes_file.exists() else "")
+            + (
+                '<form method="post" action="/library/delete">'
+                f'<input type="hidden" name="file" value="{html.escape(html_file.name, quote=True)}">'
+                '<button class="button danger compact-action" type="submit" title="Delete from library">Delete</button>'
+                '</form>'
+            )
             + "</div>"
             + "</div>"
         )
@@ -95,7 +116,8 @@ def inventory_markup() -> str:
 
 class ViewerHandler(SimpleHTTPRequestHandler):
     def do_GET(self) -> None:
-        request_path = urlparse(self.path).path
+        parsed_url = urlparse(self.path)
+        request_path = parsed_url.path
         if request_path in {"/", "/index.html"}:
             self.send_html(render_template("index.html"), no_cache=True)
             return
@@ -120,7 +142,59 @@ class ViewerHandler(SimpleHTTPRequestHandler):
         if request_path.startswith("/static/"):
             self.serve_static(request_path)
             return
+        if request_path.startswith(f"/{OUTPUT_DIR.name}/") and parsed_url.query == "embed=thumbnail":
+            self.serve_viewer_thumbnail(request_path)
+            return
         return super().do_GET()
+
+    def serve_viewer_thumbnail(self, request_path: str) -> None:
+        relative_name = unquote(request_path.removeprefix(f"/{OUTPUT_DIR.name}/"))
+        candidate = (OUTPUT_DIR / relative_name).resolve()
+        output_root = OUTPUT_DIR.resolve()
+        if candidate.suffix.lower() != ".html" or not candidate.is_file() or output_root not in candidate.parents:
+            self.send_error(404, "Preview not found")
+            return
+        text = candidate.read_text(encoding="utf-8", errors="replace")
+        if "thumbnail-mode" not in text:
+            thumbnail_head = """
+  <style>
+    html.thumbnail-mode body {
+      display: block !important;
+      min-height: 100vh !important;
+      overflow: hidden !important;
+    }
+    html.thumbnail-mode aside,
+    html.thumbnail-mode .sidebar-resizer,
+    html.thumbnail-mode .thread-floater,
+    html.thumbnail-mode .viewer-menu {
+      display: none !important;
+    }
+    html.thumbnail-mode main {
+      min-height: 100vh !important;
+      padding: 0 !important;
+      display: block !important;
+    }
+    html.thumbnail-mode .stage {
+      min-height: 100vh !important;
+      height: 100vh !important;
+      border: 0 !important;
+      border-radius: 0 !important;
+      cursor: default !important;
+    }
+    html.thumbnail-mode canvas {
+      min-height: 100vh !important;
+      height: 100vh !important;
+    }
+  </style>
+  <script>
+    document.documentElement.classList.add("thumbnail-mode");
+    document.addEventListener("DOMContentLoaded", () => {
+      document.body.classList.add("thumbnail-mode", "hide-jumps", "hide-markers");
+    });
+  </script>
+"""
+            text = text.replace("</head>", thumbnail_head + "</head>", 1)
+        self.send_html(text.encode("utf-8"), no_cache=True)
 
     def send_html(self, body: bytes, status: int = 200, no_cache: bool = False) -> None:
         self.send_response(status)
@@ -167,6 +241,9 @@ class ViewerHandler(SimpleHTTPRequestHandler):
         if self.path == "/inventory/delete":
             self.delete_thread_inventory()
             return
+        if self.path == "/library/delete":
+            self.delete_library_item()
+            return
         if self.path != "/convert":
             self.send_error(404)
             return
@@ -200,6 +277,11 @@ class ViewerHandler(SimpleHTTPRequestHandler):
                 return
         if fill_spacing < 0.1 or fill_spacing > 2:
             self.send_app_error("Fill spacing must be between 0.1 and 2 mm")
+            return
+        try:
+            max_stitch = parse_max_stitch(form)
+        except ValueError as error:
+            self.send_app_error(str(error))
             return
         fill_mode = form["fill_mode"].value if "fill_mode" in form and form["fill_mode"].value else "tatami"
         if fill_mode not in {"tatami", "horizontal"}:
@@ -247,6 +329,7 @@ class ViewerHandler(SimpleHTTPRequestHandler):
                     fill_mode=fill_mode,
                     fill_angle_deg=fill_angle_deg,
                     fill_spacing_mm=fill_spacing,
+                    max_stitch_mm=max_stitch,
                     max_colors=max_colors,
                     color_merge_distance=color_merge_distance,
                     pdf_page=pdf_page,
@@ -258,6 +341,7 @@ class ViewerHandler(SimpleHTTPRequestHandler):
                     fill_mode=fill_mode,
                     fill_angle_deg=fill_angle_deg,
                     fill_spacing_mm=fill_spacing,
+                    max_stitch_mm=max_stitch,
                     max_colors=max_colors,
                     color_merge_distance=color_merge_distance,
                     pdf_page=pdf_page,
@@ -273,6 +357,7 @@ class ViewerHandler(SimpleHTTPRequestHandler):
                     fill_mode=fill_mode,
                     fill_angle_deg=fill_angle_deg,
                     fill_spacing_mm=fill_spacing,
+                    max_stitch_mm=max_stitch,
                     max_colors=max_colors,
                     color_merge_distance=color_merge_distance,
                     pdf_page=pdf_page,
@@ -284,6 +369,7 @@ class ViewerHandler(SimpleHTTPRequestHandler):
                     fill_mode=fill_mode,
                     fill_angle_deg=fill_angle_deg,
                     fill_spacing_mm=fill_spacing,
+                    max_stitch_mm=max_stitch,
                     max_colors=max_colors,
                     color_merge_distance=color_merge_distance,
                     pdf_page=pdf_page,
@@ -371,6 +457,11 @@ class ViewerHandler(SimpleHTTPRequestHandler):
         if fill_spacing < 0.1 or fill_spacing > 2:
             self.send_app_error("Fill spacing must be between 0.1 and 2 mm")
             return
+        try:
+            max_stitch = parse_max_stitch(form)
+        except ValueError as error:
+            self.send_app_error(str(error))
+            return
         fill_mode = form["fill_mode"].value if "fill_mode" in form and form["fill_mode"].value else "tatami"
         if fill_mode not in {"tatami", "horizontal"}:
             self.send_app_error("Fill mode must be Tatami or Horizontal")
@@ -409,6 +500,7 @@ class ViewerHandler(SimpleHTTPRequestHandler):
                 fill_mode=fill_mode,
                 fill_angle_deg=fill_angle_deg,
                 fill_spacing_mm=fill_spacing,
+                max_stitch_mm=max_stitch,
                 max_colors=max_colors,
                 color_merge_distance=color_merge_distance,
                 pdf_page=pdf_page,
@@ -466,6 +558,29 @@ class ViewerHandler(SimpleHTTPRequestHandler):
             delete_inventory_item(item_id)
         self.send_response(303)
         self.send_header("Location", "/inventory")
+        self.end_headers()
+
+    def delete_library_item(self) -> None:
+        form = cgi.FieldStorage(
+            fp=self.rfile,
+            headers=self.headers,
+            environ={
+                "REQUEST_METHOD": "POST",
+                "CONTENT_TYPE": self.headers.get("Content-Type", ""),
+            },
+        )
+        file_name = form["file"].value if "file" in form and form["file"].value else ""
+        target = (OUTPUT_DIR / Path(file_name).name).resolve()
+        output_root = OUTPUT_DIR.resolve()
+        if target.suffix.lower() != ".html" or output_root not in target.parents:
+            self.send_app_error("Library item was invalid")
+            return
+        for path in OUTPUT_DIR.glob(f"{target.stem}.*"):
+            candidate = path.resolve()
+            if output_root in candidate.parents and candidate.is_file():
+                candidate.unlink()
+        self.send_response(303)
+        self.send_header("Location", "/library")
         self.end_headers()
 
 

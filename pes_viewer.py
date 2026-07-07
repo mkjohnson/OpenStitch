@@ -435,6 +435,7 @@ def render_html(
     fill_mode: str = "tatami",
     fill_angle_deg: float = 45.0,
     fill_spacing_mm: float = 0.5,
+    max_stitch_mm: float = 3.0,
     max_colors: int = 6,
     color_merge_distance: float = 56.0,
     pdf_page: int = 1,
@@ -457,6 +458,7 @@ def render_html(
         "Color changes": counts["color_changes"],
         "Color blocks": len(color_blocks),
         "Threads": len(pattern.threadlist) if pattern is not None else len(color_blocks),
+        "Max stitch length": f"{max_stitch_mm:.1f} mm",
     }
     max_step = counts["needle_points"]
     stats_html = "\n          ".join(
@@ -516,6 +518,7 @@ def render_html(
             '<input type="hidden" name="fill_mode" value="{fill_mode}">'
             '<input type="hidden" name="fill_angle_deg" value="{fill_angle_deg}">'
             '<input type="hidden" name="fill_spacing_mm" value="{fill_spacing}">'
+            '<input type="hidden" name="max_stitch_mm" value="{max_stitch}">'
             '<input type="hidden" name="max_colors" value="{max_colors}">'
             '<input type="hidden" name="color_merge_distance" value="{color_merge_distance}">'
             '<input type="hidden" name="pdf_page" value="{pdf_page}">'
@@ -529,6 +532,7 @@ def render_html(
             fill_mode=html.escape(fill_mode, quote=True),
             fill_angle_deg=fill_angle_deg,
             fill_spacing=fill_spacing_mm,
+            max_stitch=max_stitch_mm,
             max_colors=max_colors,
             color_merge_distance=color_merge_distance,
             pdf_page=pdf_page,
@@ -976,6 +980,33 @@ def render_html(
       min-height: calc(100vh - 38px);
       display: block;
     }}
+    body.thumbnail-mode {{
+      display: block;
+      min-height: 100vh;
+      overflow: hidden;
+    }}
+    body.thumbnail-mode aside,
+    body.thumbnail-mode .sidebar-resizer,
+    body.thumbnail-mode .thread-floater,
+    body.thumbnail-mode .viewer-menu {{
+      display: none;
+    }}
+    body.thumbnail-mode main {{
+      min-height: 100vh;
+      padding: 0;
+      display: block;
+    }}
+    body.thumbnail-mode .stage {{
+      min-height: 100vh;
+      height: 100vh;
+      border: 0;
+      border-radius: 0;
+      cursor: default;
+    }}
+    body.thumbnail-mode canvas {{
+      min-height: 100vh;
+      height: 100vh;
+    }}
     .stitch {{
       fill: none;
       stroke-width: 0.52;
@@ -1122,6 +1153,10 @@ def render_html(
     const segments = JSON.parse(document.getElementById("segment-data").textContent);
     const markerData = JSON.parse(document.getElementById("marker-data").textContent);
     const palette = JSON.parse(document.getElementById("palette-data").textContent);
+    const thumbnailMode = new URLSearchParams(window.location.search).get("embed") === "thumbnail";
+    if (thumbnailMode) {{
+      document.body.classList.add("thumbnail-mode", "hide-jumps", "hide-markers");
+    }}
     const blockToggles = [...document.querySelectorAll(".block-toggle")];
     const selectedBlocksInput = document.getElementById("selected-blocks");
     const colorOrderInput = document.getElementById("color-order");
@@ -1138,9 +1173,9 @@ def render_html(
     let playing = false;
     let lastFrame = 0;
     let carry = 0;
-    let showJumps = true;
+    let showJumps = !thumbnailMode;
     let showPoints = true;
-    let showMarkers = true;
+    let showMarkers = !thumbnailMode;
     let deviceScale = 1;
     let sidebarDrag = null;
 
@@ -1785,6 +1820,7 @@ def build_viewer_html(
         fill_mode=fill_mode,
         fill_angle_deg=fill_angle_deg,
         fill_spacing_mm=fill_spacing_mm,
+        max_stitch_mm=max_stitch_mm,
         max_colors=max_colors,
         color_merge_distance=color_merge_distance,
         pdf_page=pdf_page,
