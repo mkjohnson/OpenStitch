@@ -1,7 +1,7 @@
 # embdmaker
 
 Convert SVG artwork and common image files into Brother-compatible embroidery
-files.
+files with an animated toolpath previewer.
 
 The default output is `.pes`, the common Brother embroidery format. This is a
 small digitizer: it turns SVG strokes into running stitches, closed filled SVG
