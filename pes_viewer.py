@@ -324,7 +324,7 @@ def split_long_point_span(
 def clean_run_points(
     points: list[tuple[float, float]],
     *,
-    min_stitch_mm: float = 0.35,
+    min_stitch_mm: float = 0.18,
     max_stitch_mm: float = 7.0,
     lock_stitch_mm: float = 0.7,
 ) -> list[tuple[float, float]]:
@@ -2855,7 +2855,7 @@ def write_segments_as_pes(
     thread_label_overrides: dict[int, str] | None = None,
     *,
     max_stitch_mm: float = 7.0,
-    min_stitch_mm: float = 0.35,
+    min_stitch_mm: float = 0.18,
     lock_stitch_mm: float = 0.7,
 ) -> list[dict]:
     selected_blocks = selected_blocks if selected_blocks is not None else {

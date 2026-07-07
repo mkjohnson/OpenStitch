@@ -4,8 +4,8 @@ from __future__ import annotations
 THREAD_WEIGHT_PRESETS = {
     "40wt": {
         "label": "40 wt polyester/rayon",
-        "spacing_mm": 0.25,
-        "min_spacing_mm": 0.20,
+        "spacing_mm": 0.20,
+        "min_spacing_mm": 0.16,
     },
     "30wt": {
         "label": "30 wt thicker thread",
@@ -14,8 +14,8 @@ THREAD_WEIGHT_PRESETS = {
     },
     "60wt": {
         "label": "60 wt fine thread",
-        "spacing_mm": 0.20,
-        "min_spacing_mm": 0.16,
+        "spacing_mm": 0.15,
+        "min_spacing_mm": 0.12,
     },
 }
 
