@@ -373,6 +373,46 @@ def group_color_blocks_by_inventory(
     return segments, commands, grouped_blocks, counts
 
 
+def thread_metadata_path(pes_file: Path) -> Path:
+    return pes_file.with_name(f"{pes_file.stem}.threadmeta.json")
+
+
+def apply_thread_metadata(
+    input_file: Path,
+    segments: list[dict],
+    color_blocks: list[dict],
+) -> tuple[list[dict], list[dict]]:
+    if input_file.suffix.lower() != ".pes":
+        return segments, color_blocks
+    metadata_file = thread_metadata_path(input_file)
+    if not metadata_file.exists():
+        return segments, color_blocks
+    try:
+        metadata = json.loads(metadata_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return segments, color_blocks
+    metadata_blocks = metadata.get("blocks", [])
+    if not isinstance(metadata_blocks, list):
+        return segments, color_blocks
+    for block, metadata_block in zip(color_blocks, metadata_blocks):
+        if not isinstance(metadata_block, dict):
+            continue
+        color = metadata_block.get("color")
+        label = metadata_block.get("label")
+        if isinstance(color, str):
+            try:
+                block["color"] = normalize_hex(color)
+            except ValueError:
+                pass
+        if isinstance(label, str) and label.strip():
+            block["label"] = label.strip()
+    block_colors = {block["index"]: block["color"] for block in color_blocks}
+    for segment in segments:
+        if segment["blockIndex"] in block_colors:
+            segment["color"] = block_colors[segment["blockIndex"]]
+    return segments, color_blocks
+
+
 def render_thread_plan(color_blocks: list[dict], usage_by_block: dict[int, float]) -> str:
     inventory = load_inventory()
     catalog = load_thread_catalog()
@@ -489,7 +529,9 @@ def render_legend(pattern, color_blocks: list[dict], color_controls: bool = Fals
     for block in color_blocks:
         index = block["thread"]
         color = block["color"]
-        if pattern is None:
+        if block.get("label"):
+            label = html.escape(block["label"])
+        elif pattern is None:
             label = html.escape(block.get("label", f"SVG {color}"))
         else:
             label = html.escape(thread_label(pattern, index))
@@ -670,6 +712,7 @@ def render_html(
             '<input id="selected-blocks" type="hidden" name="selected_blocks" value="">'
             '<input id="color-order" type="hidden" name="color_order" value="">'
             '<input id="color-overrides" type="hidden" name="color_overrides" value="">'
+            '<input id="thread-label-overrides" type="hidden" name="thread_label_overrides" value="">'
         ).format(
             action=html.escape(color_export_action, quote=True),
             source=html.escape(source_name, quote=True),
@@ -1478,6 +1521,7 @@ def render_html(
     const selectedBlocksInput = document.getElementById("selected-blocks");
     const colorOrderInput = document.getElementById("color-order");
     const colorOverridesInput = document.getElementById("color-overrides");
+    const threadLabelOverridesInput = document.getElementById("thread-label-overrides");
     const threadList = document.querySelector(".color-export ul");
     const orderButtons = [...document.querySelectorAll("[data-order-move]")];
     const colorInputs = [...document.querySelectorAll("[data-block-color]")];
@@ -1657,6 +1701,7 @@ def render_html(
         colorOrderInput.value = orderedBlocks.join(",");
       }}
       syncColorOverrides();
+      syncThreadLabelOverrides();
       updateShoppingList();
       renderScene();
     }}
@@ -1799,6 +1844,27 @@ def render_html(
       colorOverridesInput.value = JSON.stringify(overrides);
     }}
 
+    function labelForBlock(blockIndex) {{
+      const color = palette[blockIndex];
+      const row = document.querySelector(`[data-block-row="${{blockIndex}}"]`);
+      const select = row ? row.querySelector("[data-block-select]") : null;
+      if (select && select.value && normalizeHex(select.value) === color) {{
+        const selected = select.selectedOptions && select.selectedOptions[0];
+        if (selected && selected.textContent) return cleanThreadLabel(selected.textContent);
+      }}
+      const closest = closestThreadOption(color, knownThreadOptions);
+      return closest ? cleanThreadLabel(closest.label) : `Thread ${{color}}`;
+    }}
+
+    function syncThreadLabelOverrides() {{
+      if (!threadLabelOverridesInput) return;
+      const labels = {{}};
+      for (const blockIndex of selectedBlocks) {{
+        labels[blockIndex] = labelForBlock(blockIndex);
+      }}
+      threadLabelOverridesInput.value = JSON.stringify(labels);
+    }}
+
     function applyBlockColor(blockIndex, color) {{
       const normalized = normalizeHex(color);
       if (!normalized) return;
@@ -1815,6 +1881,7 @@ def render_html(
         sortThreadSelect(select, normalized);
       }}
       syncColorOverrides();
+      syncThreadLabelOverrides();
       updateShoppingList();
       renderScene();
     }}
@@ -2326,6 +2393,7 @@ def build_viewer_html(
         color_blocks,
         counts,
     )
+    segments, color_blocks = apply_thread_metadata(input_file, segments, color_blocks)
 
     html_text = render_html(
         input_file,
@@ -2357,7 +2425,8 @@ def write_segments_as_pes(
     selected_blocks: set[int] | None = None,
     color_order: list[int] | None = None,
     color_overrides: dict[int, str] | None = None,
-) -> None:
+    thread_label_overrides: dict[int, str] | None = None,
+) -> list[dict]:
     selected_blocks = selected_blocks if selected_blocks is not None else {
         block["index"] for block in color_blocks
     }
@@ -2389,6 +2458,7 @@ def write_segments_as_pes(
     pattern = embroidery.EmbPattern()
     active_block: int | None = None
     previous_point: tuple[float, float] | None = None
+    written_blocks: list[dict] = []
 
     def write_segment(segment: dict) -> None:
         nonlocal active_block, previous_point
@@ -2396,7 +2466,19 @@ def write_segments_as_pes(
         if block_index != active_block:
             block = block_by_index[block_index]
             color = color_overrides.get(block_index, block["color"]) if color_overrides else block["color"]
-            pattern.add_thread(make_thread(normalize_hex(color)))
+            normalized_color = normalize_hex(color)
+            pattern.add_thread(make_thread(normalized_color))
+            label = ""
+            if thread_label_overrides:
+                label = thread_label_overrides.get(block_index, "")
+            label = label or block.get("label", "") or f"Thread {normalized_color}"
+            written_blocks.append(
+                {
+                    "color": normalized_color,
+                    "label": label,
+                    "source_block": block_index,
+                }
+            )
             if active_block is not None:
                 pattern.color_change()
             active_block = block_index
@@ -2438,6 +2520,7 @@ def write_segments_as_pes(
         raise ValueError("No selected stitches to write.")
     pattern.end()
     pattern.write(str(output_file))
+    return written_blocks
 
 
 def write_filtered_pes(
@@ -2446,6 +2529,7 @@ def write_filtered_pes(
     selected_blocks: set[int],
     color_order: list[int] | None = None,
     color_overrides: dict[int, str] | None = None,
+    thread_label_overrides: dict[int, str] | None = None,
     *,
     fit_width_mm: float | None = None,
     fit_height_mm: float | None = None,
@@ -2490,19 +2574,33 @@ def write_filtered_pes(
         if pattern is None:
             raise ValueError(f"Could not read embroidery file: {input_file}")
         segments, _, color_blocks, _ = collect_segments(pattern)
+    if color_overrides:
+        for block in color_blocks:
+            block_index = block["index"]
+            if block_index in color_overrides:
+                block["color"] = color_overrides[block_index]
+        block_colors = {block["index"]: block["color"] for block in color_blocks}
+        for segment in segments:
+            if segment["blockIndex"] in block_colors:
+                segment["color"] = block_colors[segment["blockIndex"]]
     segments, _, color_blocks, _ = group_color_blocks_by_inventory(
         segments,
         [],
         color_blocks,
         {},
     )
-    write_segments_as_pes(
+    written_blocks = write_segments_as_pes(
         segments,
         color_blocks,
         output_file,
         selected_blocks,
         color_order,
         color_overrides,
+        thread_label_overrides,
+    )
+    thread_metadata_path(output_file).write_text(
+        json.dumps({"blocks": written_blocks}, indent=2),
+        encoding="utf-8",
     )
 
 

@@ -448,6 +448,20 @@ class ViewerHandler(SimpleHTTPRequestHandler):
         except (TypeError, ValueError, json.JSONDecodeError):
             self.send_app_error("Color overrides were invalid")
             return
+        try:
+            raw_label_overrides = (
+                json.loads(form["thread_label_overrides"].value)
+                if "thread_label_overrides" in form and form["thread_label_overrides"].value
+                else {}
+            )
+            thread_label_overrides = {
+                int(block_index): str(label).strip()
+                for block_index, label in raw_label_overrides.items()
+                if str(label).strip()
+            }
+        except (TypeError, ValueError, json.JSONDecodeError):
+            self.send_app_error("Thread label overrides were invalid")
+            return
 
         fit_width = None
         if "fit_width_mm" in form and form["fit_width_mm"].value:
@@ -505,6 +519,7 @@ class ViewerHandler(SimpleHTTPRequestHandler):
                 selected_blocks,
                 color_order=color_order,
                 color_overrides=color_overrides,
+                thread_label_overrides=thread_label_overrides,
                 fit_width_mm=fit_width,
                 fill_mode=fill_mode,
                 fill_angle_deg=fill_angle_deg,
