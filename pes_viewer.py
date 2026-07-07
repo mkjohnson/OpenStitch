@@ -532,10 +532,20 @@ def render_legend(pattern, color_blocks: list[dict], color_controls: bool = Fals
                 options=inventory_options,
             )
         items.append(
-            f'<li data-block-row="{block["index"]}"><span class="swatch" style="background:{html.escape(color)}"></span>'
-            f'<span>{checkbox}Block {block["index"] + 1}: {label}'
-            f'<small>{block["stitches"]} stitches</small></span>'
-            f'<code>{html.escape(color)}</code>{color_editor}{reorder}</li>'
+            f'<li data-block-row="{block["index"]}">'
+            '<details class="thread-details">'
+            '<summary class="thread-summary">'
+            f'{checkbox}<span class="swatch" style="background:{html.escape(color)}"></span>'
+            '<span class="thread-summary-text">'
+            f'<strong>Block {block["index"] + 1}: {label}</strong>'
+            f'<small>{block["stitches"]} stitches</small>'
+            '</span>'
+            f'<code>{html.escape(color)}</code>'
+            '<span class="thread-edit-label">Edit</span>'
+            '</summary>'
+            f'{color_editor}{reorder}'
+            '</details>'
+            '</li>'
         )
     return "\n          ".join(items)
 
@@ -940,8 +950,45 @@ def render_html(
       box-shadow: 0 12px 32px rgba(23, 32, 38, 0.16);
       overflow: hidden;
     }}
+    body.thread-floater-collapsed main {{
+      padding-right: 76px;
+    }}
+    body.thread-floater-collapsed .thread-floater {{
+      bottom: auto;
+      width: 58px;
+      min-height: 58px;
+      padding: 8px;
+      grid-template-rows: auto;
+    }}
+    body.thread-floater-collapsed .thread-floater ul,
+    body.thread-floater-collapsed .export-button {{
+      display: none;
+    }}
+    body.thread-floater-collapsed .thread-floater-title span {{
+      display: none;
+    }}
     .thread-floater h2 {{
       margin: 0;
+    }}
+    .thread-floater-title {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }}
+    .thread-floater-toggle {{
+      width: 38px;
+      min-height: 34px;
+      flex: 0 0 auto;
+      padding: 0;
+      border-color: #9aa9a3;
+      background: #ffffff;
+      color: #26332f;
+      font-size: 18px;
+      line-height: 1;
+    }}
+    .thread-floater-toggle:hover {{
+      background: #eef4f1;
     }}
     .thread-floater ul {{
       overflow: auto;
@@ -991,26 +1038,60 @@ def render_html(
       gap: 10px;
     }}
     li {{
-      display: grid;
-      grid-template-columns: 18px minmax(0, 1fr);
-      align-items: center;
-      gap: 9px;
+      display: block;
       font-size: 13px;
     }}
-    li span:nth-child(2) {{
+    .thread-details {{
+      border: 1px solid #e2e7df;
+      border-radius: 8px;
+      background: #fbfcfa;
+      overflow: hidden;
+    }}
+    .thread-details[open] {{
+      background: #ffffff;
+      border-color: #cbd4cf;
+    }}
+    .thread-summary {{
+      display: grid;
+      grid-template-columns: 18px 18px minmax(0, 1fr) auto auto;
+      align-items: center;
+      gap: 8px;
+      padding: 9px;
+      cursor: pointer;
+      list-style: none;
+    }}
+    .thread-summary::-webkit-details-marker {{
+      display: none;
+    }}
+    .thread-summary-text {{
       display: grid;
       gap: 2px;
       min-width: 0;
     }}
+    .thread-summary-text strong,
+    .thread-summary-text small {{
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }}
     li code {{
-      grid-column: 2;
       width: fit-content;
+      color: #52605a;
+      font-size: 12px;
+    }}
+    .thread-edit-label {{
+      color: #2f6f73;
+      font-size: 12px;
+      font-weight: 700;
+    }}
+    .thread-details[open] .thread-edit-label {{
+      color: #52605a;
     }}
     .block-color-controls {{
-      grid-column: 2;
       display: grid;
       grid-template-columns: minmax(82px, 0.52fr) minmax(110px, 1fr);
       gap: 6px;
+      padding: 0 9px 9px;
       min-width: 0;
     }}
     .block-color-input,
@@ -1084,15 +1165,14 @@ def render_html(
     .block-toggle {{
       width: 16px;
       height: 16px;
-      margin: 0 6px 0 0;
+      margin: 0;
       accent-color: #2f6f73;
-      vertical-align: -2px;
     }}
     .block-order-controls {{
-      grid-column: 2;
       display: grid;
       grid-template-columns: repeat(2, 1fr);
       gap: 4px;
+      padding: 0 9px 9px;
     }}
     .order-button {{
       min-height: 26px;
@@ -1284,7 +1364,10 @@ def render_html(
   </main>
   {export_open}
     <section class="thread-floater" aria-label="Thread color controls">
-      <h2>Threads</h2>
+      <div class="thread-floater-title">
+        <h2><span>Threads</span></h2>
+        <button id="thread-floater-toggle" class="thread-floater-toggle" type="button" aria-label="Collapse thread controls">-</button>
+      </div>
       <ul>
         {legend}
       </ul>
@@ -1312,6 +1395,7 @@ def render_html(
     const zoomReadout = document.getElementById("zoom-readout");
     const viewerMenuToggle = document.getElementById("viewer-menu-toggle");
     const sidebarResizer = document.getElementById("sidebar-resizer");
+    const threadFloaterToggle = document.getElementById("thread-floater-toggle");
     const shoppingListText = document.getElementById("shopping-list-text");
     const copyShoppingList = document.getElementById("copy-shopping-list");
     const downloadShoppingList = document.getElementById("download-shopping-list");
@@ -1676,6 +1760,17 @@ def render_html(
     viewerMenuToggle.addEventListener("click", () => {{
       document.body.classList.toggle("viewer-menu-open");
     }});
+    if (threadFloaterToggle) {{
+      threadFloaterToggle.addEventListener("click", () => {{
+        const collapsed = document.body.classList.toggle("thread-floater-collapsed");
+        threadFloaterToggle.textContent = collapsed ? "T" : "-";
+        threadFloaterToggle.setAttribute(
+          "aria-label",
+          collapsed ? "Expand thread controls" : "Collapse thread controls"
+        );
+        resizeCanvas();
+      }});
+    }}
     document.addEventListener("click", (event) => {{
       if (!event.target.closest(".viewer-menu")) {{
         document.body.classList.remove("viewer-menu-open");
@@ -1795,6 +1890,7 @@ def render_html(
       renderScene();
     }});
     for (const toggle of blockToggles) {{
+      toggle.addEventListener("click", (event) => event.stopPropagation());
       toggle.addEventListener("change", syncSelectedBlocks);
     }}
     for (const button of orderButtons) {{
