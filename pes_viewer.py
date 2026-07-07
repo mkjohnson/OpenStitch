@@ -12,6 +12,12 @@ from image_digitizer import image_to_segments, is_raster_source, svg_needs_raste
 from svg2brother import extract_runs_for_final_size, positive_float, make_thread
 from thread_catalog import load_thread_catalog
 from thread_inventory import closest_inventory_match, load_inventory, normalize_hex, rgb_distance
+from thread_settings import (
+    DEFAULT_THREAD_WEIGHT,
+    minimum_fill_spacing,
+    normalize_thread_weight,
+    thread_weight_label,
+)
 
 
 EMB_UNITS_PER_MM = 10.0
@@ -273,6 +279,21 @@ def estimate_stitch_time(counts: dict, color_blocks: list[dict]) -> str:
     if minutes:
         return f"{minutes} min {seconds} sec"
     return f"{seconds} sec"
+
+
+def render_density_warning(thread_weight: str, fill_spacing_mm: float) -> str:
+    minimum = minimum_fill_spacing(thread_weight)
+    if fill_spacing_mm >= minimum:
+        return ""
+    return (
+        '<section class="density-warning">'
+        "<h2>Density Warning</h2>"
+        "<p>"
+        f"{html.escape(thread_weight_label(thread_weight))} usually needs at least "
+        f"{minimum:.2f} mm fill spacing. This design uses {fill_spacing_mm:.2f} mm."
+        "</p>"
+        "</section>"
+    )
 
 
 def point_distance(a: tuple[float, float], b: tuple[float, float]) -> float:
@@ -691,6 +712,7 @@ def render_html(
     fill_mode: str = "tatami",
     fill_angle_deg: float = 45.0,
     fill_spacing_mm: float = 0.5,
+    thread_weight: str = DEFAULT_THREAD_WEIGHT,
     max_stitch_mm: float = 3.0,
     max_colors: int = 6,
     color_merge_distance: float = 56.0,
@@ -703,6 +725,8 @@ def render_html(
     legend = render_legend(pattern, color_blocks, color_controls=True)
     usage_by_block = estimate_thread_usage(segments)
     thread_plan = render_thread_plan(color_blocks, usage_by_block)
+    thread_weight = normalize_thread_weight(thread_weight)
+    density_warning = render_density_warning(thread_weight, fill_spacing_mm)
     stats = {
         "Design": input_file.name,
         "Source": source_label,
@@ -714,6 +738,7 @@ def render_html(
         "Color changes": counts["color_changes"],
         "Color blocks": len(color_blocks),
         "Threads": len(pattern.threadlist) if pattern is not None else len(color_blocks),
+        "Thread weight": thread_weight_label(thread_weight),
         "Max stitch length": f"{max_stitch_mm:.1f} mm",
         "Estimated stitch time": estimate_stitch_time(counts, color_blocks),
     }
@@ -799,6 +824,7 @@ def render_html(
             '<input type="hidden" name="fill_mode" value="{fill_mode}">'
             '<input type="hidden" name="fill_angle_deg" value="{fill_angle_deg}">'
             '<input type="hidden" name="fill_spacing_mm" value="{fill_spacing}">'
+            '<input type="hidden" name="thread_weight" value="{thread_weight}">'
             '<input type="hidden" name="max_stitch_mm" value="{max_stitch}">'
             '<input type="hidden" name="max_colors" value="{max_colors}">'
             '<input type="hidden" name="color_merge_distance" value="{color_merge_distance}">'
@@ -814,6 +840,7 @@ def render_html(
             fill_mode=html.escape(fill_mode, quote=True),
             fill_angle_deg=fill_angle_deg,
             fill_spacing=fill_spacing_mm,
+            thread_weight=html.escape(thread_weight, quote=True),
             max_stitch=max_stitch_mm,
             max_colors=max_colors,
             color_merge_distance=color_merge_distance,
@@ -931,6 +958,26 @@ def render_html(
       border-radius: 8px;
       background: #fbfcfa;
       overflow: auto;
+    }}
+    .density-warning {{
+      margin: 16px 0 18px;
+      padding: 12px;
+      border: 1px solid #f4b05e;
+      border-left: 4px solid #f97316;
+      border-radius: 8px;
+      background: #fff7ed;
+    }}
+    .density-warning h2 {{
+      margin: 0 0 8px;
+      font-size: 12px;
+      text-transform: uppercase;
+      color: #7c2d12;
+    }}
+    .density-warning p {{
+      margin: 0;
+      color: #7c2d12;
+      font-size: 13px;
+      line-height: 1.4;
     }}
     .thread-plan h2 {{
       margin-top: 0;
@@ -1612,6 +1659,7 @@ def render_html(
     <section class="stats">
       {stats_html}
     </section>
+    {density_warning}
     {pes_download}
     <section class="playback" aria-label="Stitch playback controls">
       <div class="transport">
@@ -2643,6 +2691,12 @@ def parse_args() -> argparse.Namespace:
         help="For SVG/image/PDF input, distance between hatch-fill rows in millimeters; default: 0.5",
     )
     parser.add_argument(
+        "--thread-weight",
+        choices=("40wt", "30wt", "60wt"),
+        default=DEFAULT_THREAD_WEIGHT,
+        help="Thread weight profile for density warnings; default: 40wt",
+    )
+    parser.add_argument(
         "--fill-mode",
         choices=("tatami", "horizontal"),
         default="tatami",
@@ -2701,6 +2755,7 @@ def build_viewer_html(
     fill_mode: str = "tatami",
     fill_angle_deg: float = 45.0,
     fill_spacing_mm: float = 0.5,
+    thread_weight: str = DEFAULT_THREAD_WEIGHT,
     max_stitch_mm: float = 3.0,
     max_colors: int = 6,
     color_merge_distance: float = 56.0,
@@ -2769,6 +2824,7 @@ def build_viewer_html(
         fill_mode=fill_mode,
         fill_angle_deg=fill_angle_deg,
         fill_spacing_mm=fill_spacing_mm,
+        thread_weight=thread_weight,
         max_stitch_mm=max_stitch_mm,
         max_colors=max_colors,
         color_merge_distance=color_merge_distance,
@@ -2933,6 +2989,7 @@ def write_filtered_pes(
     fill_mode: str = "tatami",
     fill_angle_deg: float = 45.0,
     fill_spacing_mm: float = 0.5,
+    thread_weight: str = DEFAULT_THREAD_WEIGHT,
     max_stitch_mm: float = 3.0,
     max_colors: int = 6,
     color_merge_distance: float = 56.0,
@@ -3011,6 +3068,7 @@ def write_svg_as_pes(
     fill_mode: str = "tatami",
     fill_angle_deg: float = 45.0,
     fill_spacing_mm: float = 0.5,
+    thread_weight: str = DEFAULT_THREAD_WEIGHT,
     max_stitch_mm: float = 3.0,
     max_colors: int = 6,
     color_merge_distance: float = 56.0,
@@ -3053,6 +3111,7 @@ def write_svg_as_pes(
 
 
 def write_image_as_pes(source_file: Path, output_file: Path, **settings) -> None:
+    settings.pop("thread_weight", None)
     max_stitch_mm = float(settings.get("max_stitch_mm", 3.0))
     segments, _, color_blocks, _ = image_to_segments(source_file, **settings)
     write_segments_as_pes(
@@ -3089,6 +3148,7 @@ def main() -> int:
             fill_mode=args.fill_mode,
             fill_angle_deg=args.fill_angle_deg,
             fill_spacing_mm=args.fill_spacing_mm,
+            thread_weight=args.thread_weight,
             max_stitch_mm=args.max_stitch_mm,
             max_colors=args.max_colors,
             color_merge_distance=args.color_merge_distance,
@@ -3111,6 +3171,7 @@ def main() -> int:
                 fill_mode=args.fill_mode,
                 fill_angle_deg=args.fill_angle_deg,
                 fill_spacing_mm=args.fill_spacing_mm,
+                thread_weight=args.thread_weight,
                 max_stitch_mm=args.max_stitch_mm,
                 max_colors=args.max_colors,
                 color_merge_distance=args.color_merge_distance,
@@ -3128,6 +3189,7 @@ def main() -> int:
                 max_colors=args.max_colors,
                 color_merge_distance=args.color_merge_distance,
                 fill_spacing_mm=args.fill_spacing_mm,
+                thread_weight=args.thread_weight,
                 max_stitch_mm=args.max_stitch_mm,
                 pdf_page=args.pdf_page,
                 pdf_dpi=args.pdf_dpi,

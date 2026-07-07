@@ -14,8 +14,9 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
-from image_digitizer import is_raster_source, write_image_as_pes
-from pes_viewer import build_viewer_html, positive_float, write_filtered_pes, write_svg_as_pes
+from image_digitizer import is_raster_source
+from pes_viewer import build_viewer_html, positive_float, write_filtered_pes, write_image_as_pes, write_svg_as_pes
+from thread_settings import DEFAULT_THREAD_WEIGHT, normalize_thread_weight, recommended_fill_spacing
 from thread_inventory import add_inventory_item, delete_inventory_item, load_inventory, normalize_hex
 
 
@@ -52,6 +53,23 @@ def parse_max_stitch(form: cgi.FieldStorage, default: float = 3.0) -> float:
     if max_stitch < MIN_BROTHER_STITCH_MM or max_stitch > MAX_BROTHER_EMBROIDERY_STITCH_MM:
         raise ValueError("Max stitch length must be between 0.5 and 7.0 mm")
     return max_stitch
+
+
+def parse_thread_weight(form: cgi.FieldStorage) -> str:
+    value = form["thread_weight"].value if "thread_weight" in form and form["thread_weight"].value else DEFAULT_THREAD_WEIGHT
+    return normalize_thread_weight(value)
+
+
+def parse_fill_spacing(form: cgi.FieldStorage, thread_weight: str, default: float | None = None) -> float:
+    fill_spacing = default if default is not None else recommended_fill_spacing(thread_weight)
+    if "fill_spacing_mm" in form and form["fill_spacing_mm"].value:
+        try:
+            fill_spacing = positive_float(form["fill_spacing_mm"].value)
+        except Exception as error:
+            raise ValueError("Fill spacing must be greater than zero") from error
+    if fill_spacing < 0.1 or fill_spacing > 2:
+        raise ValueError("Fill spacing must be between 0.1 and 2 mm")
+    return fill_spacing
 
 
 def library_data() -> tuple[str, str, str]:
@@ -277,15 +295,12 @@ class ViewerHandler(SimpleHTTPRequestHandler):
             except Exception:
                 self.send_app_error("Fit width must be greater than zero")
                 return
-        fill_spacing = 0.35
-        if "fill_spacing_mm" in form and form["fill_spacing_mm"].value:
-            try:
-                fill_spacing = positive_float(form["fill_spacing_mm"].value)
-            except Exception:
-                self.send_app_error("Fill spacing must be greater than zero")
-                return
-        if fill_spacing < 0.1 or fill_spacing > 2:
-            self.send_app_error("Fill spacing must be between 0.1 and 2 mm")
+        thread_weight = parse_thread_weight(form)
+        try:
+            fill_spacing = parse_fill_spacing(form, thread_weight)
+        except ValueError as error:
+            self.send_app_error(str(error))
+            return
             return
         try:
             max_stitch = parse_max_stitch(form)
@@ -338,6 +353,7 @@ class ViewerHandler(SimpleHTTPRequestHandler):
                     fill_mode=fill_mode,
                     fill_angle_deg=fill_angle_deg,
                     fill_spacing_mm=fill_spacing,
+                    thread_weight=thread_weight,
                     max_stitch_mm=max_stitch,
                     max_colors=max_colors,
                     color_merge_distance=color_merge_distance,
@@ -350,6 +366,7 @@ class ViewerHandler(SimpleHTTPRequestHandler):
                     fill_mode=fill_mode,
                     fill_angle_deg=fill_angle_deg,
                     fill_spacing_mm=fill_spacing,
+                    thread_weight=thread_weight,
                     max_stitch_mm=max_stitch,
                     max_colors=max_colors,
                     color_merge_distance=color_merge_distance,
@@ -366,6 +383,7 @@ class ViewerHandler(SimpleHTTPRequestHandler):
                     fill_mode=fill_mode,
                     fill_angle_deg=fill_angle_deg,
                     fill_spacing_mm=fill_spacing,
+                    thread_weight=thread_weight,
                     max_stitch_mm=max_stitch,
                     max_colors=max_colors,
                     color_merge_distance=color_merge_distance,
@@ -378,6 +396,7 @@ class ViewerHandler(SimpleHTTPRequestHandler):
                     fill_mode=fill_mode,
                     fill_angle_deg=fill_angle_deg,
                     fill_spacing_mm=fill_spacing,
+                    thread_weight=thread_weight,
                     max_stitch_mm=max_stitch,
                     max_colors=max_colors,
                     color_merge_distance=color_merge_distance,
@@ -470,15 +489,11 @@ class ViewerHandler(SimpleHTTPRequestHandler):
             except Exception:
                 self.send_app_error("Fit width must be greater than zero")
                 return
-        fill_spacing = 0.5
-        if "fill_spacing_mm" in form and form["fill_spacing_mm"].value:
-            try:
-                fill_spacing = positive_float(form["fill_spacing_mm"].value)
-            except Exception:
-                self.send_app_error("Fill spacing must be greater than zero")
-                return
-        if fill_spacing < 0.1 or fill_spacing > 2:
-            self.send_app_error("Fill spacing must be between 0.1 and 2 mm")
+        thread_weight = parse_thread_weight(form)
+        try:
+            fill_spacing = parse_fill_spacing(form, thread_weight, default=0.5)
+        except ValueError as error:
+            self.send_app_error(str(error))
             return
         try:
             max_stitch = parse_max_stitch(form)
@@ -524,6 +539,7 @@ class ViewerHandler(SimpleHTTPRequestHandler):
                 fill_mode=fill_mode,
                 fill_angle_deg=fill_angle_deg,
                 fill_spacing_mm=fill_spacing,
+                thread_weight=thread_weight,
                 max_stitch_mm=max_stitch,
                 max_colors=max_colors,
                 color_merge_distance=color_merge_distance,
@@ -534,6 +550,9 @@ class ViewerHandler(SimpleHTTPRequestHandler):
                 pes_href=output_path.name,
                 color_export_action="/recreate-pes",
                 source_name=output_path.name,
+                fill_spacing_mm=fill_spacing,
+                thread_weight=thread_weight,
+                max_stitch_mm=max_stitch,
             )
         except Exception as error:
             self.send_app_error(str(error))

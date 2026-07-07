@@ -41,4 +41,21 @@ document.addEventListener("DOMContentLoaded", () => {
   if (previewButtons.length > 0 && previewFrame && !previewFrame.getAttribute("src")) {
     setPreview(previewButtons[0]);
   }
+
+  const threadWeight = document.querySelector("[data-thread-weight]");
+  const fillSpacing = document.querySelector("[data-fill-spacing]");
+  let spacingEdited = false;
+  if (fillSpacing) {
+    fillSpacing.addEventListener("input", () => {
+      spacingEdited = true;
+    });
+  }
+  if (threadWeight && fillSpacing) {
+    threadWeight.addEventListener("change", () => {
+      const option = threadWeight.selectedOptions[0];
+      if (!spacingEdited && option && option.dataset.spacing) {
+        fillSpacing.value = option.dataset.spacing;
+      }
+    });
+  }
 });
