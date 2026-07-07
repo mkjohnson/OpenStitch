@@ -391,6 +391,29 @@ def closest_thread_match(color: str, threads: list[dict]) -> dict | None:
     return min(threads, key=lambda item: rgb_distance(color, item["color"]))
 
 
+def option_text_color(hex_color: str) -> str:
+    color = hex_color.lstrip("#")
+    try:
+        red = int(color[0:2], 16)
+        green = int(color[2:4], 16)
+        blue = int(color[4:6], 16)
+    except (TypeError, ValueError):
+        return "#172026"
+    luminance = (0.299 * red) + (0.587 * green) + (0.114 * blue)
+    return "#ffffff" if luminance < 128 else "#172026"
+
+
+def thread_option(color: str, label: str) -> str:
+    return (
+        '<option value="{color}" data-swatch="{color}" '
+        'style="background-color:{color};color:{text_color};">{label}</option>'
+    ).format(
+        color=html.escape(color, quote=True),
+        text_color=html.escape(option_text_color(color), quote=True),
+        label=html.escape(label),
+    )
+
+
 def render_inventory_options() -> str:
     options = ['<option value="">Known thread colors</option>']
     inventory = load_inventory()
@@ -399,24 +422,14 @@ def render_inventory_options() -> str:
         options.append('<optgroup label="Your inventory">')
     for item in inventory:
         label = f'{inventory_label(item)} - {item["color"]}'
-        options.append(
-            '<option value="{color}">{label}</option>'.format(
-                color=html.escape(item["color"], quote=True),
-                label=html.escape(label),
-            )
-        )
+        options.append(thread_option(item["color"], label))
     if inventory:
         options.append("</optgroup>")
     if catalog:
         options.append('<optgroup label="Floriani polyester">')
     for item in catalog:
         label = f'{item["brand"]} {item["number"]} {item["name"]} - {item["color"]}'
-        options.append(
-            '<option value="{color}">{label}</option>'.format(
-                color=html.escape(item["color"], quote=True),
-                label=html.escape(label),
-            )
-        )
+        options.append(thread_option(item["color"], label))
     if catalog:
         options.append("</optgroup>")
     return "".join(options)
@@ -1397,6 +1410,9 @@ def render_html(
       grid-column: 1 / -1;
       padding: 0 6px;
     }}
+    .block-thread-select option {{
+      font-weight: 700;
+    }}
     .viewer-menu {{
       position: fixed;
       z-index: 30;
@@ -2129,6 +2145,21 @@ def render_html(
       return Math.hypot(first[0] - second[0], first[1] - second[1], first[2] - second[2]);
     }}
 
+    function readableTextColor(color) {{
+      const rgb = hexToRgb(color);
+      if (!rgb) return "#172026";
+      const luminance = (0.299 * rgb[0]) + (0.587 * rgb[1]) + (0.114 * rgb[2]);
+      return luminance < 128 ? "#ffffff" : "#172026";
+    }}
+
+    function decorateThreadOption(node, color) {{
+      node.dataset.swatch = color;
+      node.style.backgroundColor = color;
+      node.style.color = readableTextColor(color);
+      node.title = color;
+      return node;
+    }}
+
     function formatUsage(meters) {{
       if (meters < 1) return `${{Math.round(meters * 100)}} cm`;
       return `${{meters.toFixed(2)}} m`;
@@ -2213,6 +2244,7 @@ def render_html(
         const label = `${{option.label}} - match ${{distance}}`;
         const node = new Option(label, option.value);
         if (option.group) node.dataset.group = option.group;
+        decorateThreadOption(node, option.value);
         select.add(node);
       }}
       if (sorted.length === 0) {{
