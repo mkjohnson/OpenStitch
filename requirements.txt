@@ -1,0 +1,4 @@
+pyembroidery>=1.5.1
+svgelements>=1.9.6
+pillow>=12.3.0
+pymupdf>=1.28.0

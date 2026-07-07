@@ -1,0 +1,743 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>simple.svg - Embroidery Viewer</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: Inter, Segoe UI, Arial, sans-serif;
+      color: #172026;
+      background: #f7f8f5;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: minmax(280px, 340px) 1fr;
+    }
+    aside {
+      background: #ffffff;
+      border-right: 1px solid #d9ded6;
+      padding: 24px;
+      overflow: auto;
+    }
+    main {
+      min-width: 0;
+      padding: 18px;
+      display: flex;
+      align-items: stretch;
+    }
+    h1 {
+      margin: 0 0 18px;
+      font-size: 21px;
+      line-height: 1.2;
+      overflow-wrap: anywhere;
+    }
+    h2 {
+      margin: 24px 0 10px;
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0;
+      color: #52605a;
+    }
+    .stats {
+      display: grid;
+      gap: 8px;
+    }
+    .stats div {
+      display: flex;
+      justify-content: space-between;
+      gap: 14px;
+      border-bottom: 1px solid #edf0eb;
+      padding-bottom: 8px;
+      font-size: 14px;
+    }
+    .stats span { color: #52605a; }
+    .stats strong { text-align: right; }
+    .thread-plan {
+      display: grid;
+      gap: 10px;
+      margin: 16px 0 18px;
+      padding: 12px;
+      border: 1px solid #d9ded6;
+      border-radius: 8px;
+      background: #fbfcfa;
+    }
+    .thread-plan h2 {
+      margin-top: 0;
+    }
+    .thread-plan p {
+      margin: 0;
+      color: #52605a;
+      font-size: 13px;
+      line-height: 1.4;
+    }
+    .thread-plan table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+    .thread-plan th,
+    .thread-plan td {
+      padding: 7px 5px;
+      border-top: 1px solid #e2e7df;
+      text-align: left;
+      vertical-align: top;
+    }
+    .thread-plan th {
+      color: #52605a;
+      font-weight: 700;
+    }
+    .thread-status {
+      display: inline-flex;
+      min-height: 22px;
+      align-items: center;
+      padding: 0 7px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .thread-status.have {
+      background: #e3f1ea;
+      color: #245a39;
+    }
+    .thread-status.need {
+      background: #fff0df;
+      color: #7b3f00;
+    }
+    .inventory-link {
+      color: #2f6f73;
+      font-size: 13px;
+      font-weight: 700;
+    }
+    .controls {
+      display: grid;
+      gap: 10px;
+      margin-top: 20px;
+    }
+    .playback {
+      display: grid;
+      gap: 12px;
+      margin: 20px 0 4px;
+      padding: 14px;
+      border: 1px solid #d9ded6;
+      border-radius: 8px;
+      background: #fbfcfa;
+    }
+    .toolpath-actions {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      margin: 14px 0 0;
+    }
+    .toolpath-actions button {
+      min-height: 34px;
+      padding: 0 8px;
+      border-color: #9aa9a3;
+      background: #ffffff;
+      color: #29332f;
+      font-size: 13px;
+      font-weight: 700;
+    }
+    .toolpath-actions button:hover {
+      background: #eef4f1;
+    }
+    .zoom-readout {
+      color: #52605a;
+      font-size: 13px;
+      font-variant-numeric: tabular-nums;
+    }
+    .transport {
+      display: grid;
+      grid-template-columns: 76px 1fr;
+      gap: 10px;
+      align-items: center;
+    }
+    button {
+      min-height: 36px;
+      border: 1px solid #2f6f73;
+      border-radius: 6px;
+      background: #2f6f73;
+      color: #ffffff;
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    button:hover {
+      background: #275f62;
+    }
+    .download-action {
+      min-height: 36px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid #2f6f73;
+      border-radius: 6px;
+      background: #2f6f73;
+      color: #ffffff;
+      font-size: 14px;
+      font-weight: 700;
+      text-decoration: none;
+    }
+    .download-action:hover {
+      background: #275f62;
+    }
+    .color-export {
+      display: grid;
+      gap: 12px;
+    }
+    .export-button {
+      margin-top: 4px;
+    }
+    .counter {
+      text-align: right;
+      color: #52605a;
+      font-size: 13px;
+      font-variant-numeric: tabular-nums;
+    }
+    .range-row {
+      display: grid;
+      gap: 6px;
+    }
+    .range-row header {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      font-size: 13px;
+      color: #52605a;
+    }
+    input[type="range"] {
+      width: 100%;
+      accent-color: #2f6f73;
+    }
+    label {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 14px;
+      color: #29332f;
+    }
+    input[type="checkbox"] {
+      width: 18px;
+      height: 18px;
+      accent-color: #2f6f73;
+    }
+    ul {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: grid;
+      gap: 10px;
+    }
+    li {
+      display: grid;
+      grid-template-columns: 18px minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 9px;
+      font-size: 13px;
+    }
+    li span:nth-child(2) {
+      display: grid;
+      gap: 2px;
+      min-width: 0;
+    }
+    .viewer-menu {
+      position: fixed;
+      z-index: 30;
+      top: 12px;
+      right: 12px;
+    }
+    .viewer-menu-button {
+      width: 42px;
+      min-height: 38px;
+      padding: 0;
+      border-color: #9aa9a3;
+      background: #ffffff;
+      color: #26332f;
+      font-size: 22px;
+      line-height: 1;
+      box-shadow: 0 4px 14px rgba(23, 32, 38, 0.12);
+    }
+    .viewer-menu-panel {
+      position: absolute;
+      top: 46px;
+      right: 0;
+      width: 220px;
+      display: none;
+      gap: 6px;
+      padding: 8px;
+      border: 1px solid #d9ded6;
+      border-radius: 8px;
+      background: #ffffff;
+      box-shadow: 0 12px 28px rgba(23, 32, 38, 0.18);
+    }
+    body.viewer-menu-open .viewer-menu-panel {
+      display: grid;
+    }
+    .viewer-menu-panel a {
+      min-height: 36px;
+      display: flex;
+      align-items: center;
+      padding: 0 10px;
+      border-radius: 6px;
+      color: #26332f;
+      text-decoration: none;
+    }
+    .viewer-menu-panel a:hover {
+      background: #eaf2ef;
+    }
+    .block-toggle {
+      width: 16px;
+      height: 16px;
+      margin: 0 6px 0 0;
+      accent-color: #2f6f73;
+      vertical-align: -2px;
+    }
+    small {
+      color: #6a746f;
+      font-size: 12px;
+    }
+    code {
+      color: #52605a;
+      font-size: 12px;
+    }
+    .swatch {
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      border: 1px solid rgba(0, 0, 0, 0.18);
+    }
+    .stage {
+      width: 100%;
+      min-height: calc(100vh - 36px);
+      background:
+        linear-gradient(#edf0eb 1px, transparent 1px),
+        linear-gradient(90deg, #edf0eb 1px, transparent 1px),
+        #fbfcfa;
+      background-size: 10mm 10mm;
+      border: 1px solid #d9ded6;
+      border-radius: 8px;
+      overflow: hidden;
+      cursor: grab;
+      touch-action: none;
+    }
+    .stage.dragging {
+      cursor: grabbing;
+    }
+    canvas {
+      width: 100%;
+      height: 100%;
+      min-height: calc(100vh - 38px);
+      display: block;
+    }
+    .stitch {
+      fill: none;
+      stroke-width: 0.52;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      vector-effect: non-scaling-stroke;
+    }
+    .jump {
+      fill: none;
+      stroke: #66736f;
+      stroke-width: 0.32;
+      stroke-dasharray: 1.6 1.2;
+      opacity: 0.45;
+      vector-effect: non-scaling-stroke;
+    }
+    .marker {
+      vector-effect: non-scaling-stroke;
+      stroke-width: 0.24;
+      opacity: 0.85;
+    }
+    .needle-point {
+      vector-effect: non-scaling-stroke;
+      stroke: rgba(23, 32, 38, 0.65);
+      stroke-width: 0.12;
+      opacity: 0.85;
+    }
+    .trim { fill: #f6a623; stroke: #6c4710; }
+    .color_change { fill: #ffffff; stroke: #243335; }
+    body.hide-jumps .jump { display: none; }
+    body.hide-markers .marker { display: none; }
+    body.hide-points .needle-point { display: none; }
+    @media (max-width: 820px) {
+      body {
+        grid-template-columns: 1fr;
+      }
+      aside {
+        border-right: 0;
+        border-bottom: 1px solid #d9ded6;
+      }
+      main {
+        min-height: 62vh;
+      }
+      .stage, canvas {
+        min-height: 62vh;
+      }
+    }
+  </style>
+</head>
+<body data-stats="{&quot;Design&quot;: &quot;simple.svg&quot;, &quot;Source&quot;: &quot;SVG converted preview&quot;, &quot;Size&quot;: &quot;60.0 x 40.8 mm&quot;, &quot;Needle points&quot;: 367, &quot;Stitch segments&quot;: 367, &quot;Jumps&quot;: 0, &quot;Trims&quot;: 0, &quot;Color changes&quot;: 2, &quot;Color blocks&quot;: 3, &quot;Threads&quot;: 3}">
+  <div class="viewer-menu">
+    <button id="viewer-menu-toggle" class="viewer-menu-button" type="button" aria-label="Open menu">&#9776;</button>
+    <nav class="viewer-menu-panel" aria-label="Application menu">
+      <a href="/">Convert Another</a>
+      <a href="/library">Library</a>
+      <a href="/inventory">Thread Inventory</a>
+      <a class="download-action" href="simple_svg_view.pes" download>Download PES</a>
+    </nav>
+  </div>
+  <aside>
+    <h1>simple.svg</h1>
+    <section class="stats">
+      <div><span>Design</span><strong>simple.svg</strong></div>
+          <div><span>Source</span><strong>SVG converted preview</strong></div>
+          <div><span>Size</span><strong>60.0 x 40.8 mm</strong></div>
+          <div><span>Needle points</span><strong>367</strong></div>
+          <div><span>Stitch segments</span><strong>367</strong></div>
+          <div><span>Jumps</span><strong>0</strong></div>
+          <div><span>Trims</span><strong>0</strong></div>
+          <div><span>Color changes</span><strong>2</strong></div>
+          <div><span>Color blocks</span><strong>3</strong></div>
+          <div><span>Threads</span><strong>3</strong></div>
+    </section>
+    <section class="thread-plan"><h2>Thread Planning</h2><p>Estimated total thread: 1.88 m including 12% allowance. Colors to buy: 3.</p><table><thead><tr><th>Design color</th><th>Use</th><th>Status</th><th>Closest inventory match</th></tr></thead><tbody><tr><td><span class="swatch" style="background:#e53935"></span>#e53935</td><td>97 cm</td><td><span class="thread-status need">Need to buy</span></td><td>No inventory colors saved yet.</td></tr><tr><td><span class="swatch" style="background:#1e88e5"></span>#1e88e5</td><td>84 cm</td><td><span class="thread-status need">Need to buy</span></td><td>No inventory colors saved yet.</td></tr><tr><td><span class="swatch" style="background:#222222"></span>#222222</td><td>7 cm</td><td><span class="thread-status need">Need to buy</span></td><td>No inventory colors saved yet.</td></tr></tbody></table><a class="inventory-link" href="/inventory">Edit Thread Inventory</a></section>
+    <a class="download-action" href="simple_svg_view.pes" download>Download PES</a>
+    <section class="playback" aria-label="Stitch playback controls">
+      <div class="transport">
+        <button id="play-toggle" type="button">Play</button>
+        <div id="step-counter" class="counter">0 / 367</div>
+      </div>
+      <div class="range-row">
+        <header><span>Stitch step</span><span id="step-label">367</span></header>
+        <input id="stitch-slider" type="range" min="0" max="367" value="367" step="1">
+      </div>
+      <div class="range-row">
+        <header><span>Speed</span><span id="speed-label">40 stitches/sec</span></header>
+        <input id="speed-slider" type="range" min="1" max="160" value="40" step="1">
+      </div>
+    </section>
+    <section class="controls">
+      <label><input id="toggle-jumps" type="checkbox" checked> Show jumps</label>
+      <label><input id="toggle-points" type="checkbox" checked> Show needle points</label>
+      <label><input id="toggle-markers" type="checkbox" checked> Show trims and color changes</label>
+    </section>
+    <section class="toolpath-actions" aria-label="Toolpath zoom controls">
+      <button id="zoom-out" type="button">Zoom -</button>
+      <button id="zoom-reset" type="button">Reset</button>
+      <button id="zoom-in" type="button">Zoom +</button>
+    </section>
+    <p id="zoom-readout" class="zoom-readout">Zoom 100%</p>
+    
+    <h2>Threads</h2>
+    <ul>
+      <li><span class="swatch" style="background:#e53935"></span><span><input class="block-toggle" type="checkbox" value="0" checked aria-label="Include block 1">Block 1: SVG #e53935<small>174 stitches</small></span><code>#e53935</code></li>
+          <li><span class="swatch" style="background:#1e88e5"></span><span><input class="block-toggle" type="checkbox" value="1" checked aria-label="Include block 2">Block 2: SVG #1e88e5<small>150 stitches</small></span><code>#1e88e5</code></li>
+          <li><span class="swatch" style="background:#222222"></span><span><input class="block-toggle" type="checkbox" value="2" checked aria-label="Include block 3">Block 3: SVG #222222<small>43 stitches</small></span><code>#222222</code></li>
+    </ul>
+    
+    
+  </aside>
+  <main>
+    <div id="stage" class="stage">
+      <canvas id="toolpath" data-initial-viewbox="{&quot;x&quot;: -34.79999999999999, &quot;y&quot;: -25.183841988755702, &quot;width&quot;: 69.6, &quot;height&quot;: 50.36768397751141}" aria-label="Embroidery stitch preview"></canvas>
+    </div>
+  </main>
+  <script id="segment-data" type="application/json">[[-30.0,-20.384,-25.0,-20.384,1,0,1],[-25.0,-20.384,-20.0,-20.384,1,0,2],[-20.0,-20.384,-15.0,-20.384,1,0,3],[-15.0,-20.384,-10.0,-20.384,1,0,4],[-10.0,-20.384,-5.0,-20.384,1,0,5],[-5.0,-20.384,0.0,-20.384,1,0,6],[0.0,-19.446,-5.0,-19.446,1,0,7],[-5.0,-19.446,-10.0,-19.446,1,0,8],[-10.0,-19.446,-15.0,-19.446,1,0,9],[-15.0,-19.446,-20.0,-19.446,1,0,10],[-20.0,-19.446,-25.0,-19.446,1,0,11],[-25.0,-19.446,-30.0,-19.446,1,0,12],[-30.0,-18.509,-25.0,-18.509,1,0,13],[-25.0,-18.509,-20.0,-18.509,1,0,14],[-20.0,-18.509,-15.0,-18.509,1,0,15],[-15.0,-18.509,-10.0,-18.509,1,0,16],[-10.0,-18.509,-5.0,-18.509,1,0,17],[-5.0,-18.509,0.0,-18.509,1,0,18],[0.0,-17.571,-5.0,-17.571,1,0,19],[-5.0,-17.571,-10.0,-17.571,1,0,20],[-10.0,-17.571,-15.0,-17.571,1,0,21],[-15.0,-17.571,-20.0,-17.571,1,0,22],[-20.0,-17.571,-25.0,-17.571,1,0,23],[-25.0,-17.571,-30.0,-17.571,1,0,24],[-30.0,-16.634,-25.0,-16.634,1,0,25],[-25.0,-16.634,-20.0,-16.634,1,0,26],[-20.0,-16.634,-15.0,-16.634,1,0,27],[-15.0,-16.634,-10.0,-16.634,1,0,28],[-10.0,-16.634,-5.0,-16.634,1,0,29],[-5.0,-16.634,0.0,-16.634,1,0,30],[0.0,-15.696,-5.0,-15.696,1,0,31],[-5.0,-15.696,-10.0,-15.696,1,0,32],[-10.0,-15.696,-15.0,-15.696,1,0,33],[-15.0,-15.696,-20.0,-15.696,1,0,34],[-20.0,-15.696,-25.0,-15.696,1,0,35],[-25.0,-15.696,-30.0,-15.696,1,0,36],[-30.0,-14.759,-25.0,-14.759,1,0,37],[-25.0,-14.759,-20.0,-14.759,1,0,38],[-20.0,-14.759,-15.0,-14.759,1,0,39],[-15.0,-14.759,-10.0,-14.759,1,0,40],[-10.0,-14.759,-5.0,-14.759,1,0,41],[-5.0,-14.759,0.0,-14.759,1,0,42],[0.0,-13.821,-5.0,-13.821,1,0,43],[-5.0,-13.821,-10.0,-13.821,1,0,44],[-10.0,-13.821,-15.0,-13.821,1,0,45],[-15.0,-13.821,-20.0,-13.821,1,0,46],[-20.0,-13.821,-25.0,-13.821,1,0,47],[-25.0,-13.821,-30.0,-13.821,1,0,48],[-30.0,-12.884,-25.0,-12.884,1,0,49],[-25.0,-12.884,-20.0,-12.884,1,0,50],[-20.0,-12.884,-15.0,-12.884,1,0,51],[-15.0,-12.884,-10.0,-12.884,1,0,52],[-10.0,-12.884,-5.0,-12.884,1,0,53],[-5.0,-12.884,0.0,-12.884,1,0,54],[0.0,-11.946,-5.0,-11.946,1,0,55],[-5.0,-11.946,-10.0,-11.946,1,0,56],[-10.0,-11.946,-15.0,-11.946,1,0,57],[-15.0,-11.946,-20.0,-11.946,1,0,58],[-20.0,-11.946,-25.0,-11.946,1,0,59],[-25.0,-11.946,-30.0,-11.946,1,0,60],[-30.0,-11.009,-25.0,-11.009,1,0,61],[-25.0,-11.009,-20.0,-11.009,1,0,62],[-20.0,-11.009,-15.0,-11.009,1,0,63],[-15.0,-11.009,-10.0,-11.009,1,0,64],[-10.0,-11.009,-5.0,-11.009,1,0,65],[-5.0,-11.009,0.0,-11.009,1,0,66],[0.0,-10.071,-5.0,-10.071,1,0,67],[-5.0,-10.071,-10.0,-10.071,1,0,68],[-10.0,-10.071,-15.0,-10.071,1,0,69],[-15.0,-10.071,-20.0,-10.071,1,0,70],[-20.0,-10.071,-25.0,-10.071,1,0,71],[-25.0,-10.071,-30.0,-10.071,1,0,72],[-30.0,-9.134,-25.0,-9.134,1,0,73],[-25.0,-9.134,-20.0,-9.134,1,0,74],[-20.0,-9.134,-15.0,-9.134,1,0,75],[-15.0,-9.134,-10.0,-9.134,1,0,76],[-10.0,-9.134,-5.0,-9.134,1,0,77],[-5.0,-9.134,0.0,-9.134,1,0,78],[0.0,-8.196,-5.0,-8.196,1,0,79],[-5.0,-8.196,-10.0,-8.196,1,0,80],[-10.0,-8.196,-15.0,-8.196,1,0,81],[-15.0,-8.196,-20.0,-8.196,1,0,82],[-20.0,-8.196,-25.0,-8.196,1,0,83],[-25.0,-8.196,-30.0,-8.196,1,0,84],[-30.0,-7.259,-25.0,-7.259,1,0,85],[-25.0,-7.259,-20.0,-7.259,1,0,86],[-20.0,-7.259,-15.0,-7.259,1,0,87],[-15.0,-7.259,-10.0,-7.259,1,0,88],[-10.0,-7.259,-5.0,-7.259,1,0,89],[-5.0,-7.259,0.0,-7.259,1,0,90],[0.0,-6.321,-5.0,-6.321,1,0,91],[-5.0,-6.321,-10.0,-6.321,1,0,92],[-10.0,-6.321,-15.0,-6.321,1,0,93],[-15.0,-6.321,-20.0,-6.321,1,0,94],[-20.0,-6.321,-25.0,-6.321,1,0,95],[-25.0,-6.321,-30.0,-6.321,1,0,96],[-30.0,-5.384,-25.0,-5.384,1,0,97],[-25.0,-5.384,-20.0,-5.384,1,0,98],[-20.0,-5.384,-15.0,-5.384,1,0,99],[-15.0,-5.384,-10.0,-5.384,1,0,100],[-10.0,-5.384,-5.0,-5.384,1,0,101],[-5.0,-5.384,0.0,-5.384,1,0,102],[0.0,-4.446,-5.0,-4.446,1,0,103],[-5.0,-4.446,-10.0,-4.446,1,0,104],[-10.0,-4.446,-15.0,-4.446,1,0,105],[-15.0,-4.446,-20.0,-4.446,1,0,106],[-20.0,-4.446,-25.0,-4.446,1,0,107],[-25.0,-4.446,-30.0,-4.446,1,0,108],[-30.0,-3.509,-25.0,-3.509,1,0,109],[-25.0,-3.509,-20.0,-3.509,1,0,110],[-20.0,-3.509,-15.0,-3.509,1,0,111],[-15.0,-3.509,-10.0,-3.509,1,0,112],[-10.0,-3.509,-5.0,-3.509,1,0,113],[-5.0,-3.509,0.0,-3.509,1,0,114],[0.0,-2.571,-5.0,-2.571,1,0,115],[-5.0,-2.571,-10.0,-2.571,1,0,116],[-10.0,-2.571,-15.0,-2.571,1,0,117],[-15.0,-2.571,-20.0,-2.571,1,0,118],[-20.0,-2.571,-25.0,-2.571,1,0,119],[-25.0,-2.571,-30.0,-2.571,1,0,120],[-30.0,-1.634,-25.0,-1.634,1,0,121],[-25.0,-1.634,-20.0,-1.634,1,0,122],[-20.0,-1.634,-15.0,-1.634,1,0,123],[-15.0,-1.634,-10.0,-1.634,1,0,124],[-10.0,-1.634,-5.0,-1.634,1,0,125],[-5.0,-1.634,0.0,-1.634,1,0,126],[0.0,-0.696,-5.0,-0.696,1,0,127],[-5.0,-0.696,-10.0,-0.696,1,0,128],[-10.0,-0.696,-15.0,-0.696,1,0,129],[-15.0,-0.696,-20.0,-0.696,1,0,130],[-20.0,-0.696,-25.0,-0.696,1,0,131],[-25.0,-0.696,-30.0,-0.696,1,0,132],[-30.0,0.241,-25.0,0.241,1,0,133],[-25.0,0.241,-20.0,0.241,1,0,134],[-20.0,0.241,-15.0,0.241,1,0,135],[-15.0,0.241,-10.0,0.241,1,0,136],[-10.0,0.241,-5.0,0.241,1,0,137],[-5.0,0.241,0.0,0.241,1,0,138],[0.0,1.179,-5.0,1.179,1,0,139],[-5.0,1.179,-10.0,1.179,1,0,140],[-10.0,1.179,-15.0,1.179,1,0,141],[-15.0,1.179,-20.0,1.179,1,0,142],[-20.0,1.179,-25.0,1.179,1,0,143],[-25.0,1.179,-30.0,1.179,1,0,144],[-30.0,2.116,-25.0,2.116,1,0,145],[-25.0,2.116,-20.0,2.116,1,0,146],[-20.0,2.116,-15.0,2.116,1,0,147],[-15.0,2.116,-10.0,2.116,1,0,148],[-10.0,2.116,-5.0,2.116,1,0,149],[-5.0,2.116,0.0,2.116,1,0,150],[0.0,3.054,-5.0,3.054,1,0,151],[-5.0,3.054,-10.0,3.054,1,0,152],[-10.0,3.054,-15.0,3.054,1,0,153],[-15.0,3.054,-20.0,3.054,1,0,154],[-20.0,3.054,-25.0,3.054,1,0,155],[-25.0,3.054,-30.0,3.054,1,0,156],[-30.0,3.991,-25.0,3.991,1,0,157],[-25.0,3.991,-20.0,3.991,1,0,158],[-20.0,3.991,-15.0,3.991,1,0,159],[-15.0,3.991,-10.0,3.991,1,0,160],[-10.0,3.991,-5.0,3.991,1,0,161],[-5.0,3.991,0.0,3.991,1,0,162],[0.0,4.929,-5.0,4.929,1,0,163],[-5.0,4.929,-10.0,4.929,1,0,164],[-10.0,4.929,-15.0,4.929,1,0,165],[-15.0,4.929,-20.0,4.929,1,0,166],[-20.0,4.929,-25.0,4.929,1,0,167],[-25.0,4.929,-30.0,4.929,1,0,168],[-30.0,5.866,-25.0,5.866,1,0,169],[-25.0,5.866,-20.0,5.866,1,0,170],[-20.0,5.866,-15.0,5.866,1,0,171],[-15.0,5.866,-10.0,5.866,1,0,172],[-10.0,5.866,-5.0,5.866,1,0,173],[-5.0,5.866,0.0,5.866,1,0,174],[9.831,-15.696,15.0,-15.696,1,1,175],[15.0,-15.696,20.169,-15.696,1,1,176],[22.244,-14.759,17.415,-14.759,1,1,177],[17.415,-14.759,12.585,-14.759,1,1,178],[12.585,-14.759,7.756,-14.759,1,1,179],[6.283,-13.821,10.641,-13.821,1,1,180],[10.641,-13.821,15.0,-13.821,1,1,181],[15.0,-13.821,19.359,-13.821,1,1,182],[19.359,-13.821,23.717,-13.821,1,1,183],[24.897,-12.884,19.948,-12.884,1,1,184],[19.948,-12.884,15.0,-12.884,1,1,185],[15.0,-12.884,10.052,-12.884,1,1,186],[10.052,-12.884,5.103,-12.884,1,1,187],[4.127,-11.946,9.563,-11.946,1,1,188],[9.563,-11.946,15.0,-11.946,1,1,189],[15.0,-11.946,20.437,-11.946,1,1,190],[20.437,-11.946,25.873,-11.946,1,1,191],[26.7,-11.009,22.02,-11.009,1,1,192],[22.02,-11.009,17.34,-11.009,1,1,193],[17.34,-11.009,12.66,-11.009,1,1,194],[12.66,-11.009,7.98,-11.009,1,1,195],[7.98,-11.009,3.3,-11.009,1,1,196],[2.605,-10.071,7.563,-10.071,1,1,197],[7.563,-10.071,12.521,-10.071,1,1,198],[12.521,-10.071,17.479,-10.071,1,1,199],[17.479,-10.071,22.437,-10.071,1,1,200],[22.437,-10.071,27.395,-10.071,1,1,201],[27.972,-9.134,22.783,-9.134,1,1,202],[22.783,-9.134,17.594,-9.134,1,1,203],[17.594,-9.134,12.406,-9.134,1,1,204],[12.406,-9.134,7.217,-9.134,1,1,205],[7.217,-9.134,2.028,-9.134,1,1,206],[1.531,-8.196,6.918,-8.196,1,1,207],[6.918,-8.196,12.306,-8.196,1,1,208],[12.306,-8.196,17.694,-8.196,1,1,209],[17.694,-8.196,23.082,-8.196,1,1,210],[23.082,-8.196,28.469,-8.196,1,1,211],[28.899,-7.259,23.34,-7.259,1,1,212],[23.34,-7.259,17.78,-7.259,1,1,213],[17.78,-7.259,12.22,-7.259,1,1,214],[12.22,-7.259,6.66,-7.259,1,1,215],[6.66,-7.259,1.101,-7.259,1,1,216],[0.765,-6.321,5.51,-6.321,1,1,217],[5.51,-6.321,10.255,-6.321,1,1,218],[10.255,-6.321,15.0,-6.321,1,1,219],[15.0,-6.321,19.745,-6.321,1,1,220],[19.745,-6.321,24.49,-6.321,1,1,221],[24.49,-6.321,29.235,-6.321,1,1,222],[29.505,-5.384,24.67,-5.384,1,1,223],[24.67,-5.384,19.835,-5.384,1,1,224],[19.835,-5.384,15.0,-5.384,1,1,225],[15.0,-5.384,10.165,-5.384,1,1,226],[10.165,-5.384,5.33,-5.384,1,1,227],[5.33,-5.384,0.495,-5.384,1,1,228],[0.271,-4.446,5.181,-4.446,1,1,229],[5.181,-4.446,10.09,-4.446,1,1,230],[10.09,-4.446,15.0,-4.446,1,1,231],[15.0,-4.446,19.91,-4.446,1,1,232],[19.91,-4.446,24.819,-4.446,1,1,233],[24.819,-4.446,29.729,-4.446,1,1,234],[29.868,-3.509,24.912,-3.509,1,1,235],[24.912,-3.509,19.956,-3.509,1,1,236],[19.956,-3.509,15.0,-3.509,1,1,237],[15.0,-3.509,10.044,-3.509,1,1,238],[10.044,-3.509,5.088,-3.509,1,1,239],[5.088,-3.509,0.132,-3.509,1,1,240],[0.046,-2.571,5.031,-2.571,1,1,241],[5.031,-2.571,10.015,-2.571,1,1,242],[10.015,-2.571,15.0,-2.571,1,1,243],[15.0,-2.571,19.985,-2.571,1,1,244],[19.985,-2.571,24.969,-2.571,1,1,245],[24.969,-2.571,29.954,-2.571,1,1,246],[30.0,-1.634,25.0,-1.634,1,1,247],[25.0,-1.634,20.0,-1.634,1,1,248],[20.0,-1.634,15.0,-1.634,1,1,249],[15.0,-1.634,10.0,-1.634,1,1,250],[10.0,-1.634,5.0,-1.634,1,1,251],[5.0,-1.634,0.0,-1.634,1,1,252],[0.046,-0.696,5.031,-0.696,1,1,253],[5.031,-0.696,10.015,-0.696,1,1,254],[10.015,-0.696,15.0,-0.696,1,1,255],[15.0,-0.696,19.985,-0.696,1,1,256],[19.985,-0.696,24.969,-0.696,1,1,257],[24.969,-0.696,29.954,-0.696,1,1,258],[29.868,0.241,24.912,0.241,1,1,259],[24.912,0.241,19.956,0.241,1,1,260],[19.956,0.241,15.0,0.241,1,1,261],[15.0,0.241,10.044,0.241,1,1,262],[10.044,0.241,5.088,0.241,1,1,263],[5.088,0.241,0.132,0.241,1,1,264],[0.271,1.179,5.181,1.179,1,1,265],[5.181,1.179,10.09,1.179,1,1,266],[10.09,1.179,15.0,1.179,1,1,267],[15.0,1.179,19.91,1.179,1,1,268],[19.91,1.179,24.819,1.179,1,1,269],[24.819,1.179,29.729,1.179,1,1,270],[29.505,2.116,24.67,2.116,1,1,271],[24.67,2.116,19.835,2.116,1,1,272],[19.835,2.116,15.0,2.116,1,1,273],[15.0,2.116,10.165,2.116,1,1,274],[10.165,2.116,5.33,2.116,1,1,275],[5.33,2.116,0.495,2.116,1,1,276],[0.765,3.054,5.51,3.054,1,1,277],[5.51,3.054,10.255,3.054,1,1,278],[10.255,3.054,15.0,3.054,1,1,279],[15.0,3.054,19.745,3.054,1,1,280],[19.745,3.054,24.49,3.054,1,1,281],[24.49,3.054,29.235,3.054,1,1,282],[28.899,3.991,23.34,3.991,1,1,283],[23.34,3.991,17.78,3.991,1,1,284],[17.78,3.991,12.22,3.991,1,1,285],[12.22,3.991,6.66,3.991,1,1,286],[6.66,3.991,1.101,3.991,1,1,287],[1.531,4.929,6.918,4.929,1,1,288],[6.918,4.929,12.306,4.929,1,1,289],[12.306,4.929,17.694,4.929,1,1,290],[17.694,4.929,23.082,4.929,1,1,291],[23.082,4.929,28.469,4.929,1,1,292],[27.972,5.866,22.783,5.866,1,1,293],[22.783,5.866,17.594,5.866,1,1,294],[17.594,5.866,12.406,5.866,1,1,295],[12.406,5.866,7.217,5.866,1,1,296],[7.217,5.866,2.028,5.866,1,1,297],[2.605,6.804,7.563,6.804,1,1,298],[7.563,6.804,12.521,6.804,1,1,299],[12.521,6.804,17.479,6.804,1,1,300],[17.479,6.804,22.437,6.804,1,1,301],[22.437,6.804,27.395,6.804,1,1,302],[26.7,7.741,22.02,7.741,1,1,303],[22.02,7.741,17.34,7.741,1,1,304],[17.34,7.741,12.66,7.741,1,1,305],[12.66,7.741,7.98,7.741,1,1,306],[7.98,7.741,3.3,7.741,1,1,307],[4.127,8.679,9.563,8.679,1,1,308],[9.563,8.679,15.0,8.679,1,1,309],[15.0,8.679,20.437,8.679,1,1,310],[20.437,8.679,25.873,8.679,1,1,311],[24.897,9.616,19.948,9.616,1,1,312],[19.948,9.616,15.0,9.616,1,1,313],[15.0,9.616,10.052,9.616,1,1,314],[10.052,9.616,5.103,9.616,1,1,315],[6.283,10.554,10.641,10.554,1,1,316],[10.641,10.554,15.0,10.554,1,1,317],[15.0,10.554,19.359,10.554,1,1,318],[19.359,10.554,23.717,10.554,1,1,319],[22.244,11.491,17.415,11.491,1,1,320],[17.415,11.491,12.585,11.491,1,1,321],[12.585,11.491,7.756,11.491,1,1,322],[9.831,12.429,15.0,12.429,1,1,323],[15.0,12.429,20.169,12.429,1,1,324],[-30.0,18.991,-28.941,18.138,1,2,325],[-28.941,18.138,-27.859,17.407,1,2,326],[-27.859,17.407,-26.753,16.79,1,2,327],[-26.753,16.79,-25.625,16.283,1,2,328],[-25.625,16.283,-24.475,15.877,1,2,329],[-24.475,15.877,-23.303,15.568,1,2,330],[-23.303,15.568,-22.111,15.348,1,2,331],[-22.111,15.348,-20.897,15.211,1,2,332],[-20.897,15.211,-19.664,15.151,1,2,333],[-19.664,15.151,-18.412,15.162,1,2,334],[-18.412,15.162,-17.142,15.236,1,2,335],[-17.142,15.236,-15.853,15.369,1,2,336],[-15.853,15.369,-14.546,15.552,1,2,337],[-14.546,15.552,-13.223,15.781,1,2,338],[-13.223,15.781,-11.883,16.048,1,2,339],[-11.883,16.048,-10.527,16.348,1,2,340],[-10.527,16.348,-9.156,16.674,1,2,341],[-9.156,16.674,-7.77,17.019,1,2,342],[-7.77,17.019,-6.37,17.377,1,2,343],[-6.37,17.377,-4.957,17.742,1,2,344],[-4.957,17.742,-3.53,18.107,1,2,345],[-3.53,18.107,-2.092,18.467,1,2,346],[-2.092,18.467,-0.641,18.814,1,2,347],[-0.641,18.814,0.821,19.142,1,2,348],[0.821,19.142,2.294,19.446,1,2,349],[2.294,19.446,3.777,19.718,1,2,350],[3.777,19.718,5.27,19.952,1,2,351],[5.27,19.952,6.772,20.142,1,2,352],[6.772,20.142,8.282,20.282,1,2,353],[8.282,20.282,9.8,20.364,1,2,354],[9.8,20.364,11.326,20.384,1,2,355],[11.326,20.384,12.858,20.334,1,2,356],[12.858,20.334,14.397,20.208,1,2,357],[14.397,20.208,15.941,19.999,1,2,358],[15.941,19.999,17.49,19.702,1,2,359],[17.49,19.702,19.044,19.31,1,2,360],[19.044,19.31,20.602,18.816,1,2,361],[20.602,18.816,22.163,18.214,1,2,362],[22.163,18.214,23.727,17.498,1,2,363],[23.727,17.498,25.293,16.662,1,2,364],[25.293,16.662,26.861,15.699,1,2,365],[26.861,15.699,28.43,14.602,1,2,366],[28.43,14.602,30.0,13.366,1,2,367]]</script>
+  <script id="marker-data" type="application/json">[[9.831,-15.696,"color_change",174],[-30.0,18.991,"color_change",324]]</script>
+  <script id="palette-data" type="application/json">["#e53935","#1e88e5","#222222"]</script>
+  <script>
+    const jumps = document.getElementById("toggle-jumps");
+    const points = document.getElementById("toggle-points");
+    const markers = document.getElementById("toggle-markers");
+    const playToggle = document.getElementById("play-toggle");
+    const stitchSlider = document.getElementById("stitch-slider");
+    const speedSlider = document.getElementById("speed-slider");
+    const stepCounter = document.getElementById("step-counter");
+    const stepLabel = document.getElementById("step-label");
+    const speedLabel = document.getElementById("speed-label");
+    const stage = document.getElementById("stage");
+    const toolpath = document.getElementById("toolpath");
+    const zoomIn = document.getElementById("zoom-in");
+    const zoomOut = document.getElementById("zoom-out");
+    const zoomReset = document.getElementById("zoom-reset");
+    const zoomReadout = document.getElementById("zoom-readout");
+    const viewerMenuToggle = document.getElementById("viewer-menu-toggle");
+    const ctx = toolpath.getContext("2d");
+    const segments = JSON.parse(document.getElementById("segment-data").textContent);
+    const markerData = JSON.parse(document.getElementById("marker-data").textContent);
+    const palette = JSON.parse(document.getElementById("palette-data").textContent);
+    const blockToggles = [...document.querySelectorAll(".block-toggle")];
+    const selectedBlocksInput = document.getElementById("selected-blocks");
+    let selectedBlocks = new Set(blockToggles.map((toggle) => Number(toggle.value)));
+    const maxStep = 367;
+    const initialViewBox = JSON.parse(toolpath.dataset.initialViewbox);
+    let viewBoxState = { ...initialViewBox };
+    let currentStep = maxStep;
+    let playing = false;
+    let lastFrame = 0;
+    let carry = 0;
+    let showJumps = true;
+    let showPoints = true;
+    let showMarkers = true;
+    let deviceScale = 1;
+
+    function resizeCanvas() {
+      const rect = toolpath.getBoundingClientRect();
+      deviceScale = window.devicePixelRatio || 1;
+      const width = Math.max(1, Math.round(rect.width * deviceScale));
+      const height = Math.max(1, Math.round(rect.height * deviceScale));
+      if (toolpath.width !== width || toolpath.height !== height) {
+        toolpath.width = width;
+        toolpath.height = height;
+      }
+      renderScene();
+    }
+
+    function toCanvasX(x) {
+      return ((x - viewBoxState.x) / viewBoxState.width) * toolpath.width;
+    }
+
+    function toCanvasY(y) {
+      return ((y - viewBoxState.y) / viewBoxState.height) * toolpath.height;
+    }
+
+    function renderScene() {
+      if (!ctx) return;
+      ctx.clearRect(0, 0, toolpath.width, toolpath.height);
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+
+      const stitchWidth = Math.max(0.8, deviceScale * 1.2);
+      const jumpWidth = Math.max(0.6, deviceScale * 0.8);
+      for (const segment of segments) {
+        const step = segment[6];
+        if (step > currentStep) continue;
+        if (!selectedBlocks.has(segment[5])) continue;
+        const isStitch = segment[4] === 1;
+        if (!isStitch && !showJumps) continue;
+        ctx.beginPath();
+        ctx.strokeStyle = isStitch ? palette[segment[5]] : "#66736f";
+        ctx.globalAlpha = isStitch ? 1 : 0.45;
+        ctx.lineWidth = isStitch ? stitchWidth : jumpWidth;
+        if (!isStitch) ctx.setLineDash([deviceScale * 5, deviceScale * 4]);
+        else ctx.setLineDash([]);
+        ctx.moveTo(toCanvasX(segment[0]), toCanvasY(segment[1]));
+        ctx.lineTo(toCanvasX(segment[2]), toCanvasY(segment[3]));
+        ctx.stroke();
+      }
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
+
+      const zoom = initialViewBox.width / viewBoxState.width;
+      if (showPoints && (currentStep <= 20000 || zoom >= 2)) {
+        const radius = stitchWidth * 2;
+        for (const segment of segments) {
+          if (segment[4] !== 1 || segment[6] > currentStep) continue;
+          if (!selectedBlocks.has(segment[5])) continue;
+          ctx.beginPath();
+          ctx.fillStyle = palette[segment[5]];
+          ctx.strokeStyle = palette[segment[5]];
+          ctx.lineWidth = Math.max(0.5, stitchWidth * 0.25);
+          ctx.arc(toCanvasX(segment[2]), toCanvasY(segment[3]), radius, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+        }
+      }
+
+      if (showMarkers) {
+        for (const marker of markerData) {
+          if (marker[3] > currentStep) continue;
+          const x = toCanvasX(marker[0]);
+          const y = toCanvasY(marker[1]);
+          ctx.beginPath();
+          ctx.fillStyle = marker[2] === "trim" ? "#f6a623" : "#ffffff";
+          ctx.strokeStyle = marker[2] === "trim" ? "#6c4710" : "#243335";
+          ctx.lineWidth = Math.max(0.8, deviceScale);
+          ctx.arc(x, y, Math.max(3, deviceScale * 3.2), 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+        }
+      }
+    }
+
+    function setViewBox(next) {
+      viewBoxState = next;
+      const zoomPercent = Math.round((initialViewBox.width / viewBoxState.width) * 100);
+      zoomReadout.textContent = `Zoom ${zoomPercent}%`;
+      renderScene();
+    }
+
+    function svgPointFromEvent(event) {
+      const rect = toolpath.getBoundingClientRect();
+      const px = (event.clientX - rect.left) / Math.max(rect.width, 1);
+      const py = (event.clientY - rect.top) / Math.max(rect.height, 1);
+      return {
+        x: viewBoxState.x + px * viewBoxState.width,
+        y: viewBoxState.y + py * viewBoxState.height,
+      };
+    }
+
+    function zoomAt(factor, center) {
+      const nextWidth = Math.min(initialViewBox.width * 8, Math.max(initialViewBox.width / 80, viewBoxState.width * factor));
+      const nextHeight = Math.min(initialViewBox.height * 8, Math.max(initialViewBox.height / 80, viewBoxState.height * factor));
+      const anchor = center || {
+        x: viewBoxState.x + viewBoxState.width / 2,
+        y: viewBoxState.y + viewBoxState.height / 2,
+      };
+      const xRatio = (anchor.x - viewBoxState.x) / viewBoxState.width;
+      const yRatio = (anchor.y - viewBoxState.y) / viewBoxState.height;
+      setViewBox({
+        x: anchor.x - nextWidth * xRatio,
+        y: anchor.y - nextHeight * yRatio,
+        width: nextWidth,
+        height: nextHeight,
+      });
+    }
+
+    function resetZoom() {
+      setViewBox({ ...initialViewBox });
+    }
+
+    function syncSelectedBlocks() {
+      selectedBlocks = new Set(
+        blockToggles.filter((toggle) => toggle.checked).map((toggle) => Number(toggle.value))
+      );
+      if (selectedBlocksInput) {
+        selectedBlocksInput.value = [...selectedBlocks].sort((a, b) => a - b).join(",");
+      }
+      renderScene();
+    }
+
+    function applyTimeline(step) {
+      currentStep = Math.max(0, Math.min(maxStep, Math.round(step)));
+      stitchSlider.value = String(currentStep);
+      stepLabel.textContent = String(currentStep);
+      stepCounter.textContent = `${currentStep} / ${maxStep}`;
+      renderScene();
+      if (currentStep >= maxStep && playing) {
+        stopPlayback();
+      }
+    }
+
+    function stopPlayback() {
+      playing = false;
+      playToggle.textContent = "Play";
+      lastFrame = 0;
+      carry = 0;
+    }
+
+    function tick(timestamp) {
+      if (!playing) return;
+      if (!lastFrame) lastFrame = timestamp;
+      const elapsed = (timestamp - lastFrame) / 1000;
+      lastFrame = timestamp;
+      carry += elapsed * Number(speedSlider.value);
+      const advance = Math.floor(carry);
+      if (advance > 0) {
+        carry -= advance;
+        applyTimeline(currentStep + advance);
+      }
+      if (playing) requestAnimationFrame(tick);
+    }
+
+    function startPlayback() {
+      if (currentStep >= maxStep) {
+        applyTimeline(0);
+      }
+      playing = true;
+      playToggle.textContent = "Pause";
+      requestAnimationFrame(tick);
+    }
+
+    playToggle.addEventListener("click", () => {
+      if (playing) {
+        stopPlayback();
+      } else {
+        startPlayback();
+      }
+    });
+    viewerMenuToggle.addEventListener("click", () => {
+      document.body.classList.toggle("viewer-menu-open");
+    });
+    document.addEventListener("click", (event) => {
+      if (!event.target.closest(".viewer-menu")) {
+        document.body.classList.remove("viewer-menu-open");
+      }
+    });
+    stitchSlider.addEventListener("input", () => {
+      stopPlayback();
+      applyTimeline(Number(stitchSlider.value));
+    });
+    speedSlider.addEventListener("input", () => {
+      speedLabel.textContent = `${speedSlider.value} stitches/sec`;
+    });
+    zoomIn.addEventListener("click", () => zoomAt(0.75));
+    zoomOut.addEventListener("click", () => zoomAt(1.35));
+    zoomReset.addEventListener("click", resetZoom);
+    stage.addEventListener("wheel", (event) => {
+      event.preventDefault();
+      zoomAt(event.deltaY < 0 ? 0.88 : 1.14, svgPointFromEvent(event));
+    }, { passive: false });
+
+    let dragStart = null;
+    stage.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) return;
+      dragStart = {
+        clientX: event.clientX,
+        clientY: event.clientY,
+        viewBox: { ...viewBoxState },
+      };
+      stage.classList.add("dragging");
+      stage.setPointerCapture(event.pointerId);
+    });
+    stage.addEventListener("pointermove", (event) => {
+      if (!dragStart) return;
+      const rect = toolpath.getBoundingClientRect();
+      const dx = ((event.clientX - dragStart.clientX) / Math.max(rect.width, 1)) * dragStart.viewBox.width;
+      const dy = ((event.clientY - dragStart.clientY) / Math.max(rect.height, 1)) * dragStart.viewBox.height;
+      setViewBox({
+        x: dragStart.viewBox.x - dx,
+        y: dragStart.viewBox.y - dy,
+        width: dragStart.viewBox.width,
+        height: dragStart.viewBox.height,
+      });
+    });
+    function endDrag(event) {
+      if (!dragStart) return;
+      dragStart = null;
+      stage.classList.remove("dragging");
+      if (stage.hasPointerCapture(event.pointerId)) {
+        stage.releasePointerCapture(event.pointerId);
+      }
+    }
+    stage.addEventListener("pointerup", endDrag);
+    stage.addEventListener("pointercancel", endDrag);
+    jumps.addEventListener("change", () => {
+      showJumps = jumps.checked;
+      renderScene();
+    });
+    points.addEventListener("change", () => {
+      showPoints = points.checked;
+      renderScene();
+    });
+    markers.addEventListener("change", () => {
+      showMarkers = markers.checked;
+      renderScene();
+    });
+    for (const toggle of blockToggles) {
+      toggle.addEventListener("change", syncSelectedBlocks);
+    }
+    window.addEventListener("resize", resizeCanvas);
+    syncSelectedBlocks();
+    resetZoom();
+    applyTimeline(maxStep);
+    resizeCanvas();
+  </script>
+</body>
+</html>

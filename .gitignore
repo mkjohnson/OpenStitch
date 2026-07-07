@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+
+viewer_output/
+server.err.log
+server.out.log
+thread_inventory.json
+
+.venv/
+venv/
+env/
+
+.DS_Store
+Thumbs.db

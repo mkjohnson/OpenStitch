@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Embroidery Utility</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <div class="app-shell">
+    <div class="menu-overlay" data-menu-overlay></div>
+    <aside class="sidebar">
+      <div class="brand">
+        <strong>Embroidery Utility</strong>
+        <span>Convert, preview, filter, export</span>
+      </div>
+      <nav class="nav">
+        <a class="active" href="/">Import</a>
+        <a href="/library">Library</a>
+        <a href="/inventory">Thread Inventory</a>
+      </nav>
+    </aside>
+    <main class="content">
+      <div class="topbar">
+        <button class="menu-button" type="button" data-menu-toggle aria-label="Open menu">&#9776;</button>
+        <div class="topbar-title">
+          <strong>Embroidery Utility</strong>
+          <span>Import</span>
+        </div>
+      </div>
+      <section class="panel">
+        <h1>Import Artwork</h1>
+        <p class="lede">Create an animated stitch preview and Brother-compatible PES file from SVG, PES, JPG, PNG, or PDF files.</p>
+        <form class="upload-form" method="post" action="/convert" enctype="multipart/form-data">
+          <label>
+            Design file
+            <input name="design" type="file" accept=".svg,.pes,.jpg,.jpeg,.png,.pdf,image/svg+xml,image/jpeg,image/png,application/pdf" required>
+          </label>
+          <p class="hint">Supported files: SVG, PES, JPG, JPEG, PNG, and PDF.</p>
+          <div class="field-grid">
+            <label>
+              Fit width, mm
+              <input name="fit_width_mm" type="number" min="1" step="0.1" value="90">
+            </label>
+            <label>
+              Max colors
+              <input name="max_colors" type="number" min="2" max="16" step="1" value="6">
+            </label>
+            <label>
+              Color flattening
+              <input name="color_merge_distance" type="number" min="0" max="255" step="1" value="56">
+            </label>
+            <label>
+              PDF page
+              <input name="pdf_page" type="number" min="1" step="1" value="1">
+            </label>
+          </div>
+          <div class="button-row">
+            <button type="submit">Convert and View</button>
+            <a class="button secondary" href="/library">Open Library</a>
+          </div>
+        </form>
+      </section>
+    </main>
+  </div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

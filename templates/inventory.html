@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Thread Inventory</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <div class="app-shell">
+    <div class="menu-overlay" data-menu-overlay></div>
+    <aside class="sidebar">
+      <div class="brand">
+        <strong>Embroidery Utility</strong>
+        <span>Convert, preview, filter, export</span>
+      </div>
+      <nav class="nav">
+        <a href="/">Import</a>
+        <a href="/library">Library</a>
+        <a class="active" href="/inventory">Thread Inventory</a>
+      </nav>
+    </aside>
+    <main class="content">
+      <div class="topbar">
+        <button class="menu-button" type="button" data-menu-toggle aria-label="Open menu">&#9776;</button>
+        <div class="topbar-title">
+          <strong>Embroidery Utility</strong>
+          <span>Thread Inventory</span>
+        </div>
+      </div>
+      <section class="panel wide-panel">
+        <h1>Thread Inventory</h1>
+        <p class="lede">Add thread colors you own so previews can show close matches and colors to buy.</p>
+        <form class="upload-form inventory-form" method="post" action="/inventory/add">
+          <div class="field-grid inventory-fields">
+            <label>
+              Brand
+              <input name="brand" type="text" placeholder="Brother, Madeira, Sulky">
+            </label>
+            <label>
+              Thread name or number
+              <input name="name" type="text" placeholder="Black 900">
+            </label>
+            <label>
+              Color
+              <input name="color" type="color" value="#222222">
+            </label>
+            <label>
+              Quantity
+              <input name="quantity" type="number" min="0" step="1" value="1">
+            </label>
+          </div>
+          <div class="button-row">
+            <button type="submit">Add Thread</button>
+            <a class="button secondary" href="/">Convert Another</a>
+          </div>
+        </form>
+        <div class="inventory-list">
+          {{inventory}}
+        </div>
+      </section>
+    </main>
+  </div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

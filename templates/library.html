@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Design Library</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <div class="app-shell">
+    <div class="menu-overlay" data-menu-overlay></div>
+    <aside class="sidebar">
+      <div class="brand">
+        <strong>Embroidery Utility</strong>
+        <span>Convert, preview, filter, export</span>
+      </div>
+      <nav class="nav">
+        <a href="/">Import</a>
+        <a class="active" href="/library">Library</a>
+        <a href="/inventory">Thread Inventory</a>
+      </nav>
+    </aside>
+    <main class="content">
+      <div class="topbar">
+        <button class="menu-button" type="button" data-menu-toggle aria-label="Open menu">&#9776;</button>
+        <div class="topbar-title">
+          <strong>Embroidery Utility</strong>
+          <span>Library</span>
+        </div>
+      </div>
+      <section class="panel wide-panel">
+        <h1>Design Library</h1>
+        <p class="lede">Recent generated previews and PES files.</p>
+        <div class="library-layout">
+          <div class="library-list">
+            {{library}}
+          </div>
+          <aside class="preview-panel">
+            <header>
+              <h2 data-library-preview-title>{{preview_title}}</h2>
+            </header>
+            {{preview}}
+          </aside>
+        </div>
+      </section>
+    </main>
+  </div>
+  <script src="/static/app.js"></script>
+</body>
+</html>
