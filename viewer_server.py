@@ -201,9 +201,14 @@ class ViewerHandler(SimpleHTTPRequestHandler):
         if fill_spacing < 0.1 or fill_spacing > 2:
             self.send_app_error("Fill spacing must be between 0.1 and 2 mm")
             return
+        fill_mode = form["fill_mode"].value if "fill_mode" in form and form["fill_mode"].value else "tatami"
+        if fill_mode not in {"tatami", "horizontal"}:
+            self.send_app_error("Fill mode must be Tatami or Horizontal")
+            return
         try:
             max_colors = int(form["max_colors"].value) if "max_colors" in form and form["max_colors"].value else 6
             pdf_page = int(form["pdf_page"].value) if "pdf_page" in form and form["pdf_page"].value else 1
+            fill_angle_deg = float(form["fill_angle_deg"].value) if "fill_angle_deg" in form and form["fill_angle_deg"].value else 45.0
             color_merge_distance = (
                 float(form["color_merge_distance"].value)
                 if "color_merge_distance" in form and form["color_merge_distance"].value
@@ -217,6 +222,9 @@ class ViewerHandler(SimpleHTTPRequestHandler):
             return
         if color_merge_distance < 0 or color_merge_distance > 255:
             self.send_app_error("Color flattening must be between 0 and 255")
+            return
+        if fill_angle_deg < -90 or fill_angle_deg > 90:
+            self.send_app_error("Fill angle must be between -90 and 90 degrees")
             return
         if pdf_page < 1:
             self.send_app_error("PDF page must be 1 or greater")
@@ -236,6 +244,8 @@ class ViewerHandler(SimpleHTTPRequestHandler):
                     uploaded_path,
                     pes_path,
                     fit_width_mm=fit_width,
+                    fill_mode=fill_mode,
+                    fill_angle_deg=fill_angle_deg,
                     fill_spacing_mm=fill_spacing,
                     max_colors=max_colors,
                     color_merge_distance=color_merge_distance,
@@ -245,6 +255,8 @@ class ViewerHandler(SimpleHTTPRequestHandler):
                 html_text, _, _ = build_viewer_html(
                     uploaded_path,
                     fit_width_mm=fit_width,
+                    fill_mode=fill_mode,
+                    fill_angle_deg=fill_angle_deg,
                     fill_spacing_mm=fill_spacing,
                     max_colors=max_colors,
                     color_merge_distance=color_merge_distance,
@@ -258,6 +270,8 @@ class ViewerHandler(SimpleHTTPRequestHandler):
                     uploaded_path,
                     pes_path,
                     fit_width_mm=fit_width,
+                    fill_mode=fill_mode,
+                    fill_angle_deg=fill_angle_deg,
                     fill_spacing_mm=fill_spacing,
                     max_colors=max_colors,
                     color_merge_distance=color_merge_distance,
@@ -267,6 +281,8 @@ class ViewerHandler(SimpleHTTPRequestHandler):
                 html_text, _, _ = build_viewer_html(
                     uploaded_path,
                     fit_width_mm=fit_width,
+                    fill_mode=fill_mode,
+                    fill_angle_deg=fill_angle_deg,
                     fill_spacing_mm=fill_spacing,
                     max_colors=max_colors,
                     color_merge_distance=color_merge_distance,
@@ -355,9 +371,14 @@ class ViewerHandler(SimpleHTTPRequestHandler):
         if fill_spacing < 0.1 or fill_spacing > 2:
             self.send_app_error("Fill spacing must be between 0.1 and 2 mm")
             return
+        fill_mode = form["fill_mode"].value if "fill_mode" in form and form["fill_mode"].value else "tatami"
+        if fill_mode not in {"tatami", "horizontal"}:
+            self.send_app_error("Fill mode must be Tatami or Horizontal")
+            return
         try:
             max_colors = int(form["max_colors"].value) if "max_colors" in form and form["max_colors"].value else 6
             pdf_page = int(form["pdf_page"].value) if "pdf_page" in form and form["pdf_page"].value else 1
+            fill_angle_deg = float(form["fill_angle_deg"].value) if "fill_angle_deg" in form and form["fill_angle_deg"].value else 45.0
             color_merge_distance = (
                 float(form["color_merge_distance"].value)
                 if "color_merge_distance" in form and form["color_merge_distance"].value
@@ -368,6 +389,9 @@ class ViewerHandler(SimpleHTTPRequestHandler):
             return
         if color_merge_distance < 0 or color_merge_distance > 255:
             self.send_app_error("Color flattening must be between 0 and 255")
+            return
+        if fill_angle_deg < -90 or fill_angle_deg > 90:
+            self.send_app_error("Fill angle must be between -90 and 90 degrees")
             return
 
         selected_label = "-".join(str(index + 1) for index in sorted(selected_blocks))
@@ -380,6 +404,8 @@ class ViewerHandler(SimpleHTTPRequestHandler):
                 color_order=color_order,
                 color_overrides=color_overrides,
                 fit_width_mm=fit_width,
+                fill_mode=fill_mode,
+                fill_angle_deg=fill_angle_deg,
                 fill_spacing_mm=fill_spacing,
                 max_colors=max_colors,
                 color_merge_distance=color_merge_distance,

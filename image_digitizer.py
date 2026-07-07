@@ -306,6 +306,8 @@ def image_to_segments(
     fit_width_mm: float | None = 90.0,
     fit_height_mm: float | None = None,
     max_colors: int = 6,
+    fill_mode: str = "tatami",
+    fill_angle_deg: float = 45.0,
     fill_spacing_mm: float = 0.5,
     min_run_mm: float = 0.35,
     background_threshold: int = 245,
@@ -324,13 +326,36 @@ def image_to_segments(
         color_merge_distance=color_merge_distance,
         background_threshold=background_threshold,
     )
-    pixels = palette_image.load()
-
     width_mm = image.width / px_per_mm
     height_mm = image.height / px_per_mm
     origin_x = -width_mm / 2
     origin_y = -height_mm / 2
     min_run_px = max(1, int(math.ceil(min_run_mm * px_per_mm)))
+    fill_mode = fill_mode.lower().strip()
+    if fill_mode not in {"horizontal", "tatami"}:
+        fill_mode = "tatami"
+    stitch_angle = fill_angle_deg if fill_mode == "tatami" else 0.0
+    working_image = palette_image
+    background_fill_index = next(
+        (index for index, color in enumerate(colors) if is_background_color(color, background_threshold)),
+        0,
+    )
+    if abs(stitch_angle) > 0.001:
+        working_image = palette_image.rotate(
+            stitch_angle,
+            resample=Image.Resampling.NEAREST,
+            expand=True,
+            fillcolor=background_fill_index,
+        )
+    pixels = working_image.load()
+    working_width, working_height = working_image.size
+    source_cx = (image.width - 1) / 2
+    source_cy = (image.height - 1) / 2
+    working_cx = (working_width - 1) / 2
+    working_cy = (working_height - 1) / 2
+    angle = math.radians(stitch_angle)
+    cos_angle = math.cos(angle)
+    sin_angle = math.sin(angle)
 
     segments: list[dict] = []
     commands: list[dict] = []
@@ -344,11 +369,70 @@ def image_to_segments(
         "ends": 0,
     }
 
-    color_order = sorted(
-        {pixels[x, y] for y in range(image.height) for x in range(image.width)},
-        key=lambda index: sum(1 for yy in range(image.height) for xx in range(image.width) if pixels[xx, yy] == index),
-        reverse=True,
-    )
+    color_counts: dict[int, int] = {}
+    for y in range(working_height):
+        for x in range(working_width):
+            index = pixels[x, y]
+            color_counts[index] = color_counts.get(index, 0) + 1
+    color_order = sorted(color_counts, key=lambda index: color_counts[index], reverse=True)
+
+    def to_design_mm(col: float, row: float) -> tuple[float, float]:
+        rotated_x = col - working_cx
+        rotated_y = row - working_cy
+        source_x = rotated_x * cos_angle - rotated_y * sin_angle + source_cx
+        source_y = rotated_x * sin_angle + rotated_y * cos_angle + source_cy
+        return origin_x + source_x / px_per_mm, origin_y + source_y / px_per_mm
+
+    def append_run(
+        block: dict,
+        x1: float,
+        y1: float,
+        x2: float,
+        y2: float,
+        row_index: int,
+    ) -> None:
+        commands.append({"x": x1, "y": y1, "command": "jump", "color": block["thread"], "step": counts["needle_points"]})
+        counts["jumps"] += 1
+        span = math.hypot(x2 - x1, y2 - y1)
+        if span <= 0.001:
+            return
+        max_len = max(max_stitch_mm, 0.1)
+        phase = ((row_index % 3) / 3.0) * max_len if fill_mode == "tatami" else 0.0
+        distances = [0.0]
+        first = max_len - phase
+        if first < max_len * 0.35:
+            first += max_len
+        position = first
+        while position < span:
+            distances.append(position)
+            position += max_len
+        distances.append(span)
+
+        last_x = x1
+        last_y = y1
+        for distance in distances[1:]:
+            ratio = distance / span
+            x = x1 + (x2 - x1) * ratio
+            y = y1 + (y2 - y1) * ratio
+            counts["needle_points"] += 1
+            counts["stitch_segments"] += 1
+            block["stitches"] += 1
+            segments.append(
+                {
+                    "x1": last_x,
+                    "y1": last_y,
+                    "x2": x,
+                    "y2": y,
+                    "kind": "stitch",
+                    "color": block["color"],
+                    "colorIndex": block["thread"],
+                    "blockIndex": block["index"],
+                    "step": counts["needle_points"],
+                }
+            )
+            commands.append({"x": x, "y": y, "command": "stitch", "color": block["thread"], "step": counts["needle_points"]})
+            last_x = x
+            last_y = y
 
     for palette_index in color_order:
         if palette_index >= len(colors):
@@ -369,11 +453,10 @@ def image_to_segments(
         if block["index"] > 0:
             counts["color_changes"] += 1
 
-        for row in range(image.height):
-            y = origin_y + row / px_per_mm
+        for row in range(working_height):
             ranges: list[tuple[int, int]] = []
             start: int | None = None
-            for col in range(image.width):
+            for col in range(working_width):
                 if pixels[col, row] == palette_index:
                     if start is None:
                         start = col
@@ -381,42 +464,18 @@ def image_to_segments(
                     if col - start >= min_run_px:
                         ranges.append((start, col - 1))
                     start = None
-            if start is not None and image.width - start >= min_run_px:
-                ranges.append((start, image.width - 1))
+            if start is not None and working_width - start >= min_run_px:
+                ranges.append((start, working_width - 1))
 
             if row % 2:
                 ranges.reverse()
             for left, right in ranges:
-                x1 = origin_x + left / px_per_mm
-                x2 = origin_x + right / px_per_mm
+                x1, y1 = to_design_mm(left, row)
+                x2, y2 = to_design_mm(right, row)
                 if row % 2:
                     x1, x2 = x2, x1
-
-                commands.append({"x": x1, "y": y, "command": "jump", "color": block["thread"], "step": counts["needle_points"]})
-                counts["jumps"] += 1
-                span = abs(x2 - x1)
-                steps = max(1, int(math.ceil(span / max(max_stitch_mm, 0.1))))
-                last_x = x1
-                for step in range(1, steps + 1):
-                    x = x1 + (x2 - x1) * (step / steps)
-                    counts["needle_points"] += 1
-                    counts["stitch_segments"] += 1
-                    block["stitches"] += 1
-                    segments.append(
-                        {
-                            "x1": last_x,
-                            "y1": y,
-                            "x2": x,
-                            "y2": y,
-                            "kind": "stitch",
-                            "color": block["color"],
-                            "colorIndex": block["thread"],
-                            "blockIndex": block["index"],
-                            "step": counts["needle_points"],
-                        }
-                    )
-                    commands.append({"x": x, "y": y, "command": "stitch", "color": block["thread"], "step": counts["needle_points"]})
-                    last_x = x
+                    y1, y2 = y2, y1
+                append_run(block, x1, y1, x2, y2, row)
 
     if not segments:
         raise ValueError("No stitchable image regions were found.")

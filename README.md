@@ -85,8 +85,10 @@ and click `Convert and View`. SVG/image/PDF uploads create both an animated
 viewer and a downloadable Brother `.pes` file. For JPG, PNG, and PDF files, use
 `Color flattening` to merge similar shades before stitches are created. Increase
 it when near-identical shades become separate thread colors, or set it to `0` to
-preserve the quantized palette. Use `Fill spacing` to control stitch density:
-smaller values create more rows and a more solid fill.
+preserve the quantized palette. Use `Fill mode`, `Fill angle`, and `Fill
+spacing` to control stitch density and direction. Tatami fill uses angled,
+staggered rows for a more embroidery-like solid fill; horizontal fill keeps the
+older straight scanline behavior.
 
 Open `Thread Inventory` to add thread colors you own, including brand, thread
 name or number, hex color, and quantity. New generated viewers estimate thread

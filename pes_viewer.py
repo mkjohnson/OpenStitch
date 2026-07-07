@@ -432,6 +432,8 @@ def render_html(
     color_export_action: str | None = None,
     source_name: str | None = None,
     fit_width_mm: float | None = None,
+    fill_mode: str = "tatami",
+    fill_angle_deg: float = 45.0,
     fill_spacing_mm: float = 0.5,
     max_colors: int = 6,
     color_merge_distance: float = 56.0,
@@ -511,6 +513,8 @@ def render_html(
             '<form class="color-export" method="post" action="{action}">'
             '<input type="hidden" name="source" value="{source}">'
             '<input type="hidden" name="fit_width_mm" value="{fit_width}">'
+            '<input type="hidden" name="fill_mode" value="{fill_mode}">'
+            '<input type="hidden" name="fill_angle_deg" value="{fill_angle_deg}">'
             '<input type="hidden" name="fill_spacing_mm" value="{fill_spacing}">'
             '<input type="hidden" name="max_colors" value="{max_colors}">'
             '<input type="hidden" name="color_merge_distance" value="{color_merge_distance}">'
@@ -522,6 +526,8 @@ def render_html(
             action=html.escape(color_export_action, quote=True),
             source=html.escape(source_name, quote=True),
             fit_width=html.escape(fit_value, quote=True),
+            fill_mode=html.escape(fill_mode, quote=True),
+            fill_angle_deg=fill_angle_deg,
             fill_spacing=fill_spacing_mm,
             max_colors=max_colors,
             color_merge_distance=color_merge_distance,
@@ -1535,6 +1541,18 @@ def parse_args() -> argparse.Namespace:
         help="For SVG/image/PDF input, distance between hatch-fill rows in millimeters; default: 0.5",
     )
     parser.add_argument(
+        "--fill-mode",
+        choices=("tatami", "horizontal"),
+        default="tatami",
+        help="For image/PDF input, fill style; default: tatami",
+    )
+    parser.add_argument(
+        "--fill-angle-deg",
+        type=float,
+        default=45.0,
+        help="For tatami image/PDF fill, stitch angle in degrees; default: 45",
+    )
+    parser.add_argument(
         "--max-stitch-mm",
         type=positive_float,
         default=3.0,
@@ -1578,6 +1596,8 @@ def build_viewer_html(
     fit_width_mm: float | None = None,
     fit_height_mm: float | None = None,
     sample_step_mm: float = 0.8,
+    fill_mode: str = "tatami",
+    fill_angle_deg: float = 45.0,
     fill_spacing_mm: float = 0.5,
     max_stitch_mm: float = 3.0,
     max_colors: int = 6,
@@ -1608,6 +1628,8 @@ def build_viewer_html(
             fit_width_mm=raster_fit_width,
             fit_height_mm=fit_height_mm,
             max_colors=max_colors,
+            fill_mode=fill_mode,
+            fill_angle_deg=fill_angle_deg,
             color_merge_distance=color_merge_distance,
             fill_spacing_mm=fill_spacing_mm,
             max_stitch_mm=max_stitch_mm,
@@ -1641,6 +1663,8 @@ def build_viewer_html(
         color_export_action=color_export_action,
         source_name=source_name,
         fit_width_mm=fit_width_mm,
+        fill_mode=fill_mode,
+        fill_angle_deg=fill_angle_deg,
         fill_spacing_mm=fill_spacing_mm,
         max_colors=max_colors,
         color_merge_distance=color_merge_distance,
@@ -1729,6 +1753,8 @@ def write_filtered_pes(
     fit_width_mm: float | None = None,
     fit_height_mm: float | None = None,
     sample_step_mm: float = 0.8,
+    fill_mode: str = "tatami",
+    fill_angle_deg: float = 45.0,
     fill_spacing_mm: float = 0.5,
     max_stitch_mm: float = 3.0,
     max_colors: int = 6,
@@ -1754,6 +1780,8 @@ def write_filtered_pes(
             fit_width_mm=raster_fit_width,
             fit_height_mm=fit_height_mm,
             max_colors=max_colors,
+            fill_mode=fill_mode,
+            fill_angle_deg=fill_angle_deg,
             color_merge_distance=color_merge_distance,
             fill_spacing_mm=fill_spacing_mm,
             max_stitch_mm=max_stitch_mm,
@@ -1788,6 +1816,8 @@ def write_svg_as_pes(
     fit_width_mm: float | None = None,
     fit_height_mm: float | None = None,
     sample_step_mm: float = 0.8,
+    fill_mode: str = "tatami",
+    fill_angle_deg: float = 45.0,
     fill_spacing_mm: float = 0.5,
     max_stitch_mm: float = 3.0,
     max_colors: int = 6,
@@ -1804,6 +1834,8 @@ def write_svg_as_pes(
             fit_width_mm=raster_fit_width,
             fit_height_mm=fit_height_mm,
             max_colors=max_colors,
+            fill_mode=fill_mode,
+            fill_angle_deg=fill_angle_deg,
             color_merge_distance=color_merge_distance,
             fill_spacing_mm=fill_spacing_mm,
             max_stitch_mm=max_stitch_mm,
@@ -1849,6 +1881,8 @@ def main() -> int:
             fit_width_mm=args.fit_width_mm,
             fit_height_mm=args.fit_height_mm,
             sample_step_mm=args.sample_step_mm,
+            fill_mode=args.fill_mode,
+            fill_angle_deg=args.fill_angle_deg,
             fill_spacing_mm=args.fill_spacing_mm,
             max_stitch_mm=args.max_stitch_mm,
             max_colors=args.max_colors,
@@ -1869,6 +1903,8 @@ def main() -> int:
                 fit_width_mm=args.fit_width_mm,
                 fit_height_mm=args.fit_height_mm,
                 sample_step_mm=args.sample_step_mm,
+                fill_mode=args.fill_mode,
+                fill_angle_deg=args.fill_angle_deg,
                 fill_spacing_mm=args.fill_spacing_mm,
                 max_stitch_mm=args.max_stitch_mm,
                 max_colors=args.max_colors,
