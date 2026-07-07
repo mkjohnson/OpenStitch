@@ -1708,12 +1708,35 @@ def render_html(
       renderScene();
     }}
 
+    function canvasViewport() {{
+      const canvasAspect = toolpath.width / Math.max(toolpath.height, 1);
+      const viewAspect = viewBoxState.width / Math.max(viewBoxState.height, 0.001);
+      if (canvasAspect > viewAspect) {{
+        const width = toolpath.height * viewAspect;
+        return {{
+          x: (toolpath.width - width) / 2,
+          y: 0,
+          width,
+          height: toolpath.height,
+        }};
+      }}
+      const height = toolpath.width / Math.max(viewAspect, 0.001);
+      return {{
+        x: 0,
+        y: (toolpath.height - height) / 2,
+        width: toolpath.width,
+        height,
+      }};
+    }}
+
     function toCanvasX(x) {{
-      return ((x - viewBoxState.x) / viewBoxState.width) * toolpath.width;
+      const viewport = canvasViewport();
+      return viewport.x + ((x - viewBoxState.x) / viewBoxState.width) * viewport.width;
     }}
 
     function toCanvasY(y) {{
-      return ((y - viewBoxState.y) / viewBoxState.height) * toolpath.height;
+      const viewport = canvasViewport();
+      return viewport.y + ((y - viewBoxState.y) / viewBoxState.height) * viewport.height;
     }}
 
     function formatPoint(x, y) {{
@@ -1885,8 +1908,11 @@ def render_html(
 
     function svgPointFromEvent(event) {{
       const rect = toolpath.getBoundingClientRect();
-      const px = (event.clientX - rect.left) / Math.max(rect.width, 1);
-      const py = (event.clientY - rect.top) / Math.max(rect.height, 1);
+      const viewport = canvasViewport();
+      const canvasX = ((event.clientX - rect.left) / Math.max(rect.width, 1)) * toolpath.width;
+      const canvasY = ((event.clientY - rect.top) / Math.max(rect.height, 1)) * toolpath.height;
+      const px = (canvasX - viewport.x) / Math.max(viewport.width, 1);
+      const py = (canvasY - viewport.y) / Math.max(viewport.height, 1);
       return {{
         x: viewBoxState.x + px * viewBoxState.width,
         y: viewBoxState.y + py * viewBoxState.height,
@@ -2254,8 +2280,11 @@ def render_html(
     stage.addEventListener("pointermove", (event) => {{
       if (!dragStart) return;
       const rect = toolpath.getBoundingClientRect();
-      const dx = ((event.clientX - dragStart.clientX) / Math.max(rect.width, 1)) * dragStart.viewBox.width;
-      const dy = ((event.clientY - dragStart.clientY) / Math.max(rect.height, 1)) * dragStart.viewBox.height;
+      const viewport = canvasViewport();
+      const dxCanvas = ((event.clientX - dragStart.clientX) / Math.max(rect.width, 1)) * toolpath.width;
+      const dyCanvas = ((event.clientY - dragStart.clientY) / Math.max(rect.height, 1)) * toolpath.height;
+      const dx = (dxCanvas / Math.max(viewport.width, 1)) * dragStart.viewBox.width;
+      const dy = (dyCanvas / Math.max(viewport.height, 1)) * dragStart.viewBox.height;
       setViewBox({{
         x: dragStart.viewBox.x - dx,
         y: dragStart.viewBox.y - dy,
