@@ -3,6 +3,8 @@
 Convert SVG artwork and common image files into Brother-compatible embroidery
 files with an animated toolpath previewer.
 
+WARNING: This is a work in progress, USE AT YOUR OWN RISK! I cannot be held responsible for any damage you may cause to your machine!
+
 I am an IT guy and after my mon passed away, I inherited her Brother Duetta. My wife has become interested in putting it to use to honor my mother's passion for quilting, crafting, and now embroidery. Now, I have been a 3D printer for several years and my wife had been struggling with some designs she purchased online. Ripped fabric, jams in the same spot, and thread bunching up where it probably shouldn't. I thought about the preview mode in a 3D printer slicer that will show you the exact path of the toolhead and filament. This is not unlike thread. So I fired up Codex and started working on this project to help my wife be able to troubleshoot her designs, convert PDF, PNG, SVG, and JPG files to PES files, and to honor my mother's legacy of a lifetime of crafting. I never realized that my mom was a tinkerer and builder until after she passed away. So, for this is dedicated to both my wife, Michelle and my mother Renee. Love you always!
 
 The default output is `.pes`, the common Brother embroidery format. This is a
