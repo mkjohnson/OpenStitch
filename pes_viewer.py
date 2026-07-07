@@ -466,6 +466,8 @@ def render_legend(pattern, color_blocks: list[dict], color_controls: bool = Fals
                 '<span class="block-color-controls">'
                 '<input class="block-color-input" type="text" value="{color}" '
                 'data-block-color="{index}" aria-label="Thread hex color for block {label_index}">'
+                '<input class="block-thread-search" type="search" placeholder="Search thread" '
+                'data-block-search="{index}" aria-label="Search known thread colors for block {label_index}">'
                 '<select class="block-thread-select" data-block-select="{index}" '
                 'aria-label="Known thread color for block {label_index}">{options}</select>'
                 '</span>'
@@ -915,11 +917,12 @@ def render_html(
     .block-color-controls {{
       grid-column: 2;
       display: grid;
-      grid-template-columns: minmax(82px, 0.55fr) minmax(110px, 1fr);
+      grid-template-columns: minmax(82px, 0.52fr) minmax(110px, 1fr);
       gap: 6px;
       min-width: 0;
     }}
     .block-color-input,
+    .block-thread-search,
     .block-thread-select {{
       width: 100%;
       min-height: 30px;
@@ -934,7 +937,11 @@ def render_html(
       padding: 0 7px;
       font-family: Consolas, monospace;
     }}
+    .block-thread-search {{
+      padding: 0 8px;
+    }}
     .block-thread-select {{
+      grid-column: 1 / -1;
       padding: 0 6px;
     }}
     .viewer-menu {{
@@ -1237,6 +1244,7 @@ def render_html(
     const threadList = document.querySelector(".color-export ul");
     const orderButtons = [...document.querySelectorAll("[data-order-move]")];
     const colorInputs = [...document.querySelectorAll("[data-block-color]")];
+    const threadSearches = [...document.querySelectorAll("[data-block-search]")];
     const threadSelects = [...document.querySelectorAll("[data-block-select]")];
     const knownThreadOptions = threadSelects.length
       ? [...threadSelects[0].querySelectorAll("option")]
@@ -1445,19 +1453,30 @@ def render_html(
     function sortThreadSelect(select, targetColor) {{
       if (!select || knownThreadOptions.length === 0) return;
       const currentValue = select.value;
+      const row = select.closest("[data-block-row]");
+      const search = row ? row.querySelector("[data-block-search]") : null;
+      const query = search ? search.value.trim().toLowerCase() : "";
       const sorted = knownThreadOptions
+        .filter((option) => {{
+          if (!query) return true;
+          return `${{option.label}} ${{option.value}} ${{option.group}}`.toLowerCase().includes(query);
+        }})
         .map((option) => ({{
           ...option,
           distance: colorDistance(targetColor, option.value),
         }}))
         .sort((a, b) => a.distance - b.distance || a.label.localeCompare(b.label));
-      select.replaceChildren(new Option("Closest known thread colors", ""));
+      const placeholder = query ? `Closest matches for "${{query}}"` : "Closest known thread colors";
+      select.replaceChildren(new Option(placeholder, ""));
       for (const option of sorted) {{
         const distance = Number.isFinite(option.distance) ? Math.round(option.distance) : "?";
         const label = `${{option.label}} - match ${{distance}}`;
         const node = new Option(label, option.value);
         if (option.group) node.dataset.group = option.group;
         select.add(node);
+      }}
+      if (sorted.length === 0) {{
+        select.add(new Option("No matching thread colors", ""));
       }}
       select.value = currentValue;
     }}
@@ -1674,6 +1693,13 @@ def render_html(
         if (select.value) {{
           applyBlockColor(Number(select.dataset.blockSelect), select.value);
         }}
+      }});
+    }}
+    for (const search of threadSearches) {{
+      search.addEventListener("input", () => {{
+        const blockIndex = Number(search.dataset.blockSearch);
+        const select = document.querySelector(`[data-block-select="${{blockIndex}}"]`);
+        sortThreadSelect(select, palette[blockIndex]);
       }});
     }}
     sortAllThreadSelects();
