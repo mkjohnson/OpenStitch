@@ -637,12 +637,20 @@ def render_html(
     embedded_usage = html.escape(json.dumps(usage_data, separators=(",", ":")), quote=False)
     embedded_inventory = html.escape(json.dumps(inventory_data, separators=(",", ":")), quote=False)
     pes_download = ""
+    email_project = ""
     if pes_href:
         pes_download = (
             '<a class="download-action" href="{href}" download>Download PES</a>'.format(
                 href=html.escape(pes_href, quote=True)
             )
         )
+        email_project = (
+            '<form id="email-project-form" class="menu-email-form" method="post" action="/email-project">'
+            '<input type="hidden" name="pes_file" value="{href}">'
+            '<input id="email-shopping-list" type="hidden" name="shopping_list" value="">'
+            '<button class="download-action" type="submit">Email Project</button>'
+            '</form>'
+        ).format(href=html.escape(pes_href, quote=True))
     export_open = ""
     export_close = ""
     export_button = ""
@@ -1192,6 +1200,12 @@ def render_html(
       width: auto;
       margin: 0;
     }}
+    .menu-email-form {{
+      display: grid;
+    }}
+    .menu-email-form button {{
+      width: 100%;
+    }}
     .viewer-menu-panel .thread-plan {{
       margin: 0;
       max-height: none;
@@ -1356,6 +1370,7 @@ def render_html(
         <a href="/library">Library</a>
         <a href="/inventory">Thread Inventory</a>
         {pes_download}
+        {email_project}
       </nav>
       {thread_plan}
     </div>
@@ -1438,6 +1453,8 @@ def render_html(
     const shoppingListEmpty = document.getElementById("shopping-list-empty");
     const copyShoppingList = document.getElementById("copy-shopping-list");
     const downloadShoppingList = document.getElementById("download-shopping-list");
+    const emailProjectForm = document.getElementById("email-project-form");
+    const emailShoppingList = document.getElementById("email-shopping-list");
     const ctx = toolpath.getContext("2d");
     const segments = JSON.parse(document.getElementById("segment-data").textContent);
     const markerData = JSON.parse(document.getElementById("marker-data").textContent);
@@ -1915,6 +1932,11 @@ def render_html(
         URL.revokeObjectURL(url);
       }});
     }}
+    if (emailProjectForm && emailShoppingList) {{
+      emailProjectForm.addEventListener("submit", () => {{
+        emailShoppingList.value = shoppingListText ? shoppingListText.value : "";
+      }});
+    }}
     zoomIn.addEventListener("click", () => zoomAt(0.75));
     zoomOut.addEventListener("click", () => zoomAt(1.35));
     zoomReset.addEventListener("click", resetZoom);
@@ -2339,58 +2361,78 @@ def write_segments_as_pes(
     selected_blocks = selected_blocks if selected_blocks is not None else {
         block["index"] for block in color_blocks
     }
-    available_blocks = {block["index"] for block in color_blocks}
+    block_by_index = {block["index"]: block for block in color_blocks}
+    available_blocks = set(block_by_index)
+    natural_order: list[int] = []
+    for segment in segments:
+        block_index = segment["blockIndex"]
+        if (
+            segment["kind"] == "stitch"
+            and block_index in selected_blocks
+            and block_index not in natural_order
+        ):
+            natural_order.append(block_index)
     if color_order is None:
-        ordered_blocks = [block["index"] for block in color_blocks]
+        ordered_blocks = natural_order
     else:
         ordered_blocks = [
             block_index
             for block_index in color_order
-            if block_index in available_blocks
+            if block_index in available_blocks and block_index in selected_blocks
         ]
         ordered_blocks.extend(
-            block["index"]
-            for block in color_blocks
-            if block["index"] not in ordered_blocks
+            block_index
+            for block_index in natural_order
+            if block_index not in ordered_blocks
         )
+    preserve_sequence = ordered_blocks == natural_order
     pattern = embroidery.EmbPattern()
     active_block: int | None = None
     previous_point: tuple[float, float] | None = None
 
-    for ordered_block in ordered_blocks:
-        if ordered_block not in selected_blocks:
-            continue
+    def write_segment(segment: dict) -> None:
+        nonlocal active_block, previous_point
+        block_index = segment["blockIndex"]
+        if block_index != active_block:
+            block = block_by_index[block_index]
+            color = color_overrides.get(block_index, block["color"]) if color_overrides else block["color"]
+            pattern.add_thread(make_thread(normalize_hex(color)))
+            if active_block is not None:
+                pattern.color_change()
+            active_block = block_index
+
+        start = (segment["x1"], segment["y1"])
+        end = (segment["x2"], segment["y2"])
+        if (
+            previous_point is None
+            or abs(previous_point[0] - start[0]) > 0.001
+            or abs(previous_point[1] - start[1]) > 0.001
+        ):
+            pattern.add_stitch_absolute(
+                embroidery.JUMP,
+                int(round(start[0] * EMB_UNITS_PER_MM)),
+                int(round(start[1] * EMB_UNITS_PER_MM)),
+            )
+        pattern.add_stitch_absolute(
+            embroidery.STITCH,
+            int(round(end[0] * EMB_UNITS_PER_MM)),
+            int(round(end[1] * EMB_UNITS_PER_MM)),
+        )
+        previous_point = end
+
+    if preserve_sequence:
         for segment in segments:
             block_index = segment["blockIndex"]
-            if block_index != ordered_block or segment["kind"] != "stitch":
+            if block_index not in selected_blocks or segment["kind"] != "stitch":
                 continue
-            if block_index != active_block:
-                block = color_blocks[block_index]
-                color = color_overrides.get(block_index, block["color"]) if color_overrides else block["color"]
-                pattern.add_thread(make_thread(normalize_hex(color)))
-                if active_block is not None:
-                    pattern.color_change()
-                active_block = block_index
-                previous_point = None
-
-            start = (segment["x1"], segment["y1"])
-            end = (segment["x2"], segment["y2"])
-            if (
-                previous_point is None
-                or abs(previous_point[0] - start[0]) > 0.001
-                or abs(previous_point[1] - start[1]) > 0.001
-            ):
-                pattern.add_stitch_absolute(
-                    embroidery.JUMP,
-                    int(round(start[0] * EMB_UNITS_PER_MM)),
-                    int(round(start[1] * EMB_UNITS_PER_MM)),
-                )
-            pattern.add_stitch_absolute(
-                embroidery.STITCH,
-                int(round(end[0] * EMB_UNITS_PER_MM)),
-                int(round(end[1] * EMB_UNITS_PER_MM)),
-            )
-            previous_point = end
+            write_segment(segment)
+    else:
+        for ordered_block in ordered_blocks:
+            for segment in segments:
+                block_index = segment["blockIndex"]
+                if block_index != ordered_block or segment["kind"] != "stitch":
+                    continue
+                write_segment(segment)
 
     if pattern.count_stitches() == 0:
         raise ValueError("No selected stitches to write.")

@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import argparse
 import cgi
+from email.message import EmailMessage
 import html
+import io
 import json
 import re
 import sys
 import uuid
+import zipfile
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlparse
@@ -246,6 +249,9 @@ class ViewerHandler(SimpleHTTPRequestHandler):
             return
         if self.path == "/library/delete":
             self.delete_library_item()
+            return
+        if self.path == "/email-project":
+            self.email_project()
             return
         if self.path != "/convert":
             self.send_error(404)
@@ -585,6 +591,56 @@ class ViewerHandler(SimpleHTTPRequestHandler):
         self.send_response(303)
         self.send_header("Location", "/library")
         self.end_headers()
+
+    def email_project(self) -> None:
+        form = cgi.FieldStorage(
+            fp=self.rfile,
+            headers=self.headers,
+            environ={
+                "REQUEST_METHOD": "POST",
+                "CONTENT_TYPE": self.headers.get("Content-Type", ""),
+            },
+        )
+        pes_name = Path(form["pes_file"].value).name if "pes_file" in form else ""
+        pes_path = (OUTPUT_DIR / pes_name).resolve()
+        output_root = OUTPUT_DIR.resolve()
+        if not pes_name or output_root not in pes_path.parents or pes_path.suffix.lower() != ".pes" or not pes_path.exists():
+            self.send_app_error("PES file not found")
+            return
+
+        shopping_text = form["shopping_list"].value if "shopping_list" in form else ""
+        if not shopping_text.strip():
+            shopping_text = "Thread shopping list\n\nAll design colors have close inventory matches.\n"
+
+        project_stem = safe_name(pes_path.stem).removesuffix(".pes")
+        zip_name = f"{project_stem}_project.zip"
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.write(pes_path, arcname=pes_path.name)
+            archive.writestr("thread-shopping-list.txt", shopping_text)
+
+        message = EmailMessage()
+        message["Subject"] = f"Embroidery project: {pes_path.stem}"
+        message["To"] = ""
+        message["From"] = ""
+        message.set_content(
+            "Attached is the embroidery project ZIP with the PES file and thread shopping list.\n"
+        )
+        message.add_attachment(
+            zip_buffer.getvalue(),
+            maintype="application",
+            subtype="zip",
+            filename=zip_name,
+        )
+        body = message.as_bytes()
+        eml_name = f"{project_stem}_email_project.eml"
+        self.send_response(200)
+        self.send_header("Content-Type", "message/rfc822")
+        self.send_header("Content-Disposition", f'attachment; filename="{eml_name}"')
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store, max-age=0")
+        self.end_headers()
+        self.wfile.write(body)
 
 
 def parse_args() -> argparse.Namespace:
