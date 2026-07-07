@@ -1475,7 +1475,8 @@ def render_html(
     .trim {{ fill: #f97316; stroke: #7c2d12; }}
     .color_change {{ fill: #2563eb; stroke: #172554; }}
     body.hide-jumps .jump {{ display: none; }}
-    body.hide-markers .marker {{ display: none; }}
+    body.hide-trims .trim {{ display: none; }}
+    body.hide-color-changes .color_change {{ display: none; }}
     body.hide-points .needle-point {{ display: none; }}
     @media (max-width: 820px) {{
       body {{
@@ -1546,7 +1547,8 @@ def render_html(
     <section class="controls">
       <label><input id="toggle-jumps" type="checkbox" checked> Show jumps</label>
       <label><input id="toggle-points" type="checkbox" checked> Show needle points</label>
-      <label><input id="toggle-markers" type="checkbox" checked> Show trims and color changes</label>
+      <label><input id="toggle-trims" type="checkbox" checked> Show trims</label>
+      <label><input id="toggle-color-changes" type="checkbox" checked> Show color changes</label>
     </section>
     <section class="view-legend" aria-label="Preview symbol legend">
       <h2>Legend</h2>
@@ -1600,7 +1602,8 @@ def render_html(
   <script>
     const jumps = document.getElementById("toggle-jumps");
     const points = document.getElementById("toggle-points");
-    const markers = document.getElementById("toggle-markers");
+    const trims = document.getElementById("toggle-trims");
+    const colorChanges = document.getElementById("toggle-color-changes");
     const playToggle = document.getElementById("play-toggle");
     const stitchSlider = document.getElementById("stitch-slider");
     const speedSlider = document.getElementById("speed-slider");
@@ -1640,7 +1643,7 @@ def render_html(
     }};
     const thumbnailMode = new URLSearchParams(window.location.search).get("embed") === "thumbnail";
     if (thumbnailMode) {{
-      document.body.classList.add("thumbnail-mode", "hide-jumps", "hide-markers");
+      document.body.classList.add("thumbnail-mode", "hide-jumps", "hide-trims", "hide-color-changes");
     }}
     const blockToggles = [...document.querySelectorAll(".block-toggle")];
     const selectedBlocksInput = document.getElementById("selected-blocks");
@@ -1672,7 +1675,8 @@ def render_html(
     let carry = 0;
     let showJumps = !thumbnailMode;
     let showPoints = true;
-    let showMarkers = !thumbnailMode;
+    let showTrims = !thumbnailMode;
+    let showColorChanges = !thumbnailMode;
     let deviceScale = 1;
     let sidebarDrag = null;
 
@@ -1727,6 +1731,12 @@ def render_html(
       return kind === "color_change" ? "Color change" : "Trim";
     }}
 
+    function shouldShowMarker(kind) {{
+      if (kind === "trim") return showTrims;
+      if (kind === "color_change") return showColorChanges;
+      return false;
+    }}
+
     function distanceToSegment(px, py, x1, y1, x2, y2) {{
       const dx = x2 - x1;
       const dy = y2 - y1;
@@ -1740,13 +1750,11 @@ def render_html(
       const py = toCanvasY(point.y);
       const zoom = initialViewBox.width / viewBoxState.width;
       const markerRadius = Math.max(8, deviceScale * 5);
-      if (showMarkers) {{
-        for (const marker of markerData) {{
-          if (marker[3] > currentStep) continue;
-          const distance = Math.hypot(px - toCanvasX(marker[0]), py - toCanvasY(marker[1]));
-          if (distance <= markerRadius) {{
-            return `${{markerKindName(marker[2])}}<br>Step ${{marker[3]}}<br>${{formatPoint(marker[0], marker[1])}}`;
-          }}
+      for (const marker of markerData) {{
+        if (!shouldShowMarker(marker[2]) || marker[3] > currentStep) continue;
+        const distance = Math.hypot(px - toCanvasX(marker[0]), py - toCanvasY(marker[1]));
+        if (distance <= markerRadius) {{
+          return `${{markerKindName(marker[2])}}<br>Step ${{marker[3]}}<br>${{formatPoint(marker[0], marker[1])}}`;
         }}
       }}
       if (showPoints && (currentStep <= 20000 || zoom >= 2)) {{
@@ -1846,20 +1854,18 @@ def render_html(
         }}
       }}
 
-      if (showMarkers) {{
-        for (const marker of markerData) {{
-          if (marker[3] > currentStep) continue;
-          const x = toCanvasX(marker[0]);
-          const y = toCanvasY(marker[1]);
-          const markerColor = markerColors[marker[2]] || {{ fill: "#64748b", stroke: "#1f2937" }};
-          ctx.beginPath();
-          ctx.fillStyle = markerColor.fill;
-          ctx.strokeStyle = markerColor.stroke;
-          ctx.lineWidth = Math.max(0.8, deviceScale);
-          ctx.arc(x, y, Math.max(3, deviceScale * 3.2), 0, Math.PI * 2);
-          ctx.fill();
-          ctx.stroke();
-        }}
+      for (const marker of markerData) {{
+        if (!shouldShowMarker(marker[2]) || marker[3] > currentStep) continue;
+        const x = toCanvasX(marker[0]);
+        const y = toCanvasY(marker[1]);
+        const markerColor = markerColors[marker[2]] || {{ fill: "#64748b", stroke: "#1f2937" }};
+        ctx.beginPath();
+        ctx.fillStyle = markerColor.fill;
+        ctx.strokeStyle = markerColor.stroke;
+        ctx.lineWidth = Math.max(0.8, deviceScale);
+        ctx.arc(x, y, Math.max(3, deviceScale * 3.2), 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
       }}
     }}
 
@@ -2301,8 +2307,12 @@ def render_html(
       showPoints = points.checked;
       renderScene();
     }});
-    markers.addEventListener("change", () => {{
-      showMarkers = markers.checked;
+    trims.addEventListener("change", () => {{
+      showTrims = trims.checked;
+      renderScene();
+    }});
+    colorChanges.addEventListener("change", () => {{
+      showColorChanges = colorChanges.checked;
       renderScene();
     }});
     for (const toggle of blockToggles) {{
