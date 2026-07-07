@@ -432,6 +432,7 @@ def render_html(
     color_export_action: str | None = None,
     source_name: str | None = None,
     fit_width_mm: float | None = None,
+    fill_spacing_mm: float = 0.5,
     max_colors: int = 6,
     color_merge_distance: float = 56.0,
     pdf_page: int = 1,
@@ -510,6 +511,7 @@ def render_html(
             '<form class="color-export" method="post" action="{action}">'
             '<input type="hidden" name="source" value="{source}">'
             '<input type="hidden" name="fit_width_mm" value="{fit_width}">'
+            '<input type="hidden" name="fill_spacing_mm" value="{fill_spacing}">'
             '<input type="hidden" name="max_colors" value="{max_colors}">'
             '<input type="hidden" name="color_merge_distance" value="{color_merge_distance}">'
             '<input type="hidden" name="pdf_page" value="{pdf_page}">'
@@ -520,6 +522,7 @@ def render_html(
             action=html.escape(color_export_action, quote=True),
             source=html.escape(source_name, quote=True),
             fit_width=html.escape(fit_value, quote=True),
+            fill_spacing=fill_spacing_mm,
             max_colors=max_colors,
             color_merge_distance=color_merge_distance,
             pdf_page=pdf_page,
@@ -1638,6 +1641,7 @@ def build_viewer_html(
         color_export_action=color_export_action,
         source_name=source_name,
         fit_width_mm=fit_width_mm,
+        fill_spacing_mm=fill_spacing_mm,
         max_colors=max_colors,
         color_merge_distance=color_merge_distance,
         pdf_page=pdf_page,

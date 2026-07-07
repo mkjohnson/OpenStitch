@@ -191,6 +191,16 @@ class ViewerHandler(SimpleHTTPRequestHandler):
             except Exception:
                 self.send_app_error("Fit width must be greater than zero")
                 return
+        fill_spacing = 0.15
+        if "fill_spacing_mm" in form and form["fill_spacing_mm"].value:
+            try:
+                fill_spacing = positive_float(form["fill_spacing_mm"].value)
+            except Exception:
+                self.send_app_error("Fill spacing must be greater than zero")
+                return
+        if fill_spacing < 0.1 or fill_spacing > 2:
+            self.send_app_error("Fill spacing must be between 0.1 and 2 mm")
+            return
         try:
             max_colors = int(form["max_colors"].value) if "max_colors" in form and form["max_colors"].value else 6
             pdf_page = int(form["pdf_page"].value) if "pdf_page" in form and form["pdf_page"].value else 1
@@ -226,6 +236,7 @@ class ViewerHandler(SimpleHTTPRequestHandler):
                     uploaded_path,
                     pes_path,
                     fit_width_mm=fit_width,
+                    fill_spacing_mm=fill_spacing,
                     max_colors=max_colors,
                     color_merge_distance=color_merge_distance,
                     pdf_page=pdf_page,
@@ -234,6 +245,7 @@ class ViewerHandler(SimpleHTTPRequestHandler):
                 html_text, _, _ = build_viewer_html(
                     uploaded_path,
                     fit_width_mm=fit_width,
+                    fill_spacing_mm=fill_spacing,
                     max_colors=max_colors,
                     color_merge_distance=color_merge_distance,
                     pdf_page=pdf_page,
@@ -246,6 +258,7 @@ class ViewerHandler(SimpleHTTPRequestHandler):
                     uploaded_path,
                     pes_path,
                     fit_width_mm=fit_width,
+                    fill_spacing_mm=fill_spacing,
                     max_colors=max_colors,
                     color_merge_distance=color_merge_distance,
                     pdf_page=pdf_page,
@@ -254,6 +267,7 @@ class ViewerHandler(SimpleHTTPRequestHandler):
                 html_text, _, _ = build_viewer_html(
                     uploaded_path,
                     fit_width_mm=fit_width,
+                    fill_spacing_mm=fill_spacing,
                     max_colors=max_colors,
                     color_merge_distance=color_merge_distance,
                     pdf_page=pdf_page,
@@ -331,6 +345,16 @@ class ViewerHandler(SimpleHTTPRequestHandler):
             except Exception:
                 self.send_app_error("Fit width must be greater than zero")
                 return
+        fill_spacing = 0.5
+        if "fill_spacing_mm" in form and form["fill_spacing_mm"].value:
+            try:
+                fill_spacing = positive_float(form["fill_spacing_mm"].value)
+            except Exception:
+                self.send_app_error("Fill spacing must be greater than zero")
+                return
+        if fill_spacing < 0.1 or fill_spacing > 2:
+            self.send_app_error("Fill spacing must be between 0.1 and 2 mm")
+            return
         try:
             max_colors = int(form["max_colors"].value) if "max_colors" in form and form["max_colors"].value else 6
             pdf_page = int(form["pdf_page"].value) if "pdf_page" in form and form["pdf_page"].value else 1
@@ -356,6 +380,7 @@ class ViewerHandler(SimpleHTTPRequestHandler):
                 color_order=color_order,
                 color_overrides=color_overrides,
                 fit_width_mm=fit_width,
+                fill_spacing_mm=fill_spacing,
                 max_colors=max_colors,
                 color_merge_distance=color_merge_distance,
                 pdf_page=pdf_page,
