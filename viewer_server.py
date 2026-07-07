@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import cgi
 from email.message import EmailMessage
 import html
@@ -23,6 +24,7 @@ from thread_inventory import add_inventory_item, delete_inventory_item, load_inv
 RESOURCE_DIR = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
 DATA_DIR = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path.cwd()
 OUTPUT_DIR = DATA_DIR / "viewer_output"
+PROJECT_SUFFIX = ".embdproj"
 TEMPLATE_DIR = RESOURCE_DIR / "templates"
 STATIC_DIR = RESOURCE_DIR / "static"
 MIN_BROTHER_STITCH_MM = 0.5
@@ -70,6 +72,147 @@ def parse_fill_spacing(form: cgi.FieldStorage, thread_weight: str, default: floa
     if fill_spacing < 0.1 or fill_spacing > 2:
         raise ValueError("Fill spacing must be between 0.1 and 2 mm")
     return fill_spacing
+
+
+def project_settings(
+    *,
+    fit_width: float | None,
+    fill_spacing: float,
+    thread_weight: str,
+    max_stitch: float,
+    fill_mode: str,
+    fill_angle_deg: float,
+    max_colors: int,
+    color_merge_distance: float,
+    pdf_page: int,
+) -> dict:
+    return {
+        "fit_width_mm": fit_width,
+        "fill_spacing_mm": fill_spacing,
+        "thread_weight": normalize_thread_weight(thread_weight),
+        "max_stitch_mm": max_stitch,
+        "fill_mode": fill_mode,
+        "fill_angle_deg": fill_angle_deg,
+        "max_colors": max_colors,
+        "color_merge_distance": color_merge_distance,
+        "pdf_page": pdf_page,
+    }
+
+
+def write_project_file(project_path: Path, source_path: Path, settings: dict, summary_text: str) -> None:
+    project = {
+        "format": "openstitch-project",
+        "version": 1,
+        "source_name": source_path.name,
+        "source_data_b64": base64.b64encode(source_path.read_bytes()).decode("ascii"),
+        "settings": settings,
+    }
+    with zipfile.ZipFile(project_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("project.json", json.dumps(project, indent=2))
+        archive.write(source_path, arcname=f"source/{source_path.name}")
+        archive.writestr("project-summary.txt", summary_text)
+
+
+def estimate_time_text(counts: dict) -> str:
+    stitch_seconds = counts.get("needle_points", 0) / 600.0 * 60.0
+    jump_seconds = counts.get("jumps", 0) * 0.25
+    trim_seconds = counts.get("trims", 0) * 2.0
+    color_seconds = counts.get("color_changes", 0) * 25.0
+    total_seconds = max(1, int(round(stitch_seconds + jump_seconds + trim_seconds + color_seconds)))
+    minutes, seconds = divmod(total_seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours} hr {minutes} min"
+    if minutes:
+        return f"{minutes} min {seconds} sec"
+    return f"{seconds} sec"
+
+
+def project_summary_text(source_path: Path, settings: dict, bounds: tuple[float, float, float, float], counts: dict) -> str:
+    min_x, min_y, max_x, max_y = bounds
+    lines = [
+        "OpenStitch project summary",
+        "",
+        f"Design: {source_path.name}",
+        f"Size: {max_x - min_x:.1f} x {max_y - min_y:.1f} mm",
+        f"Estimated stitch time: {estimate_time_text(counts)}",
+        "",
+        "Stitch metrics",
+        f"Needle points: {counts.get('needle_points', 0)}",
+        f"Stitch segments: {counts.get('stitch_segments', 0)}",
+        f"Jumps: {counts.get('jumps', 0)}",
+        f"Trims: {counts.get('trims', 0)}",
+        f"Color changes: {counts.get('color_changes', 0)}",
+        "",
+        "Initial settings",
+        f"Fit width: {settings.get('fit_width_mm') or 'original'} mm",
+        f"Fill spacing: {settings.get('fill_spacing_mm')} mm",
+        f"Thread weight: {settings.get('thread_weight')}",
+        f"Max stitch length: {settings.get('max_stitch_mm')} mm",
+        f"Fill mode: {settings.get('fill_mode')}",
+        f"Fill angle: {settings.get('fill_angle_deg')} deg",
+        f"Max colors: {settings.get('max_colors')}",
+        f"Color flattening: {settings.get('color_merge_distance')}",
+        f"PDF page: {settings.get('pdf_page')}",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def load_project_upload(upload) -> tuple[str, bytes, dict]:
+    raw = upload.file.read()
+    try:
+        with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+            project = json.loads(archive.read("project.json").decode("utf-8"))
+    except (KeyError, zipfile.BadZipFile, UnicodeDecodeError, json.JSONDecodeError):
+        try:
+            project = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise ValueError("Project file could not be read.") from error
+    if project.get("format") not in {"openstitch-project", "embroidery-utility-project"}:
+        raise ValueError("Project file format was not recognized.")
+    source_name = safe_name(str(project.get("source_name") or "project.svg"))
+    source_data = project.get("source_data_b64")
+    settings = project.get("settings")
+    if not isinstance(source_data, str) or not isinstance(settings, dict):
+        raise ValueError("Project file is missing source data or settings.")
+    try:
+        source_bytes = base64.b64decode(source_data, validate=True)
+    except ValueError as error:
+        raise ValueError("Project source data was invalid.") from error
+    return source_name, source_bytes, settings
+
+
+def coerce_project_settings(settings: dict) -> dict:
+    thread_weight = normalize_thread_weight(str(settings.get("thread_weight") or DEFAULT_THREAD_WEIGHT))
+    fill_spacing = float(settings.get("fill_spacing_mm", recommended_fill_spacing(thread_weight)))
+    if fill_spacing < 0.1 or fill_spacing > 2:
+        raise ValueError("Project fill spacing must be between 0.1 and 2 mm")
+    max_stitch = float(settings.get("max_stitch_mm", 3.0))
+    if max_stitch < MIN_BROTHER_STITCH_MM or max_stitch > MAX_BROTHER_EMBROIDERY_STITCH_MM:
+        raise ValueError("Project max stitch length must be between 0.5 and 7.0 mm")
+    fill_mode = str(settings.get("fill_mode") or "tatami")
+    if fill_mode not in {"tatami", "horizontal"}:
+        fill_mode = "tatami"
+    fill_angle_deg = float(settings.get("fill_angle_deg", 45.0))
+    max_colors = int(settings.get("max_colors", 6))
+    color_merge_distance = float(settings.get("color_merge_distance", 56.0))
+    pdf_page = int(settings.get("pdf_page", 1))
+    fit_width = settings.get("fit_width_mm", 90.0)
+    fit_width = None if fit_width in {"", None} else float(fit_width)
+    if fit_width is not None and fit_width <= 0:
+        raise ValueError("Project fit width must be greater than zero")
+    return project_settings(
+        fit_width=fit_width,
+        fill_spacing=fill_spacing,
+        thread_weight=thread_weight,
+        max_stitch=max_stitch,
+        fill_mode=fill_mode,
+        fill_angle_deg=fill_angle_deg,
+        max_colors=max_colors,
+        color_merge_distance=color_merge_distance,
+        pdf_page=pdf_page,
+    )
 
 
 def library_data() -> tuple[str, str, str]:
@@ -236,6 +379,77 @@ class ViewerHandler(SimpleHTTPRequestHandler):
             no_cache=True,
         )
 
+    def render_design_files(
+        self,
+        source_path: Path,
+        html_path: Path,
+        pes_path: Path,
+        project_path: Path,
+        settings: dict,
+    ) -> None:
+        fit_width = settings["fit_width_mm"]
+        fill_spacing = settings["fill_spacing_mm"]
+        thread_weight = settings["thread_weight"]
+        max_stitch = settings["max_stitch_mm"]
+        fill_mode = settings["fill_mode"]
+        fill_angle_deg = settings["fill_angle_deg"]
+        max_colors = settings["max_colors"]
+        color_merge_distance = settings["color_merge_distance"]
+        pdf_page = settings["pdf_page"]
+        pes_href = None
+        if source_path.suffix.lower() == ".svg":
+            write_svg_as_pes(
+                source_path,
+                pes_path,
+                fit_width_mm=fit_width,
+                fill_mode=fill_mode,
+                fill_angle_deg=fill_angle_deg,
+                fill_spacing_mm=fill_spacing,
+                thread_weight=thread_weight,
+                max_stitch_mm=max_stitch,
+                max_colors=max_colors,
+                color_merge_distance=color_merge_distance,
+                pdf_page=pdf_page,
+            )
+            pes_href = pes_path.name
+        elif is_raster_source(source_path):
+            write_image_as_pes(
+                source_path,
+                pes_path,
+                fit_width_mm=fit_width,
+                fill_mode=fill_mode,
+                fill_angle_deg=fill_angle_deg,
+                fill_spacing_mm=fill_spacing,
+                thread_weight=thread_weight,
+                max_stitch_mm=max_stitch,
+                max_colors=max_colors,
+                color_merge_distance=color_merge_distance,
+                pdf_page=pdf_page,
+            )
+            pes_href = pes_path.name
+        elif source_path.suffix.lower() == ".pes":
+            pes_href = source_path.name
+        html_text, bounds, counts = build_viewer_html(
+            source_path,
+            fit_width_mm=fit_width,
+            fill_mode=fill_mode,
+            fill_angle_deg=fill_angle_deg,
+            fill_spacing_mm=fill_spacing,
+            thread_weight=thread_weight,
+            max_stitch_mm=max_stitch,
+            max_colors=max_colors,
+            color_merge_distance=color_merge_distance,
+            pdf_page=pdf_page,
+            pes_href=pes_href,
+            project_href=project_path.name,
+            color_export_action="/recreate-pes",
+            source_name=source_path.name,
+        )
+        html_path.write_text(html_text, encoding="utf-8")
+        summary_text = project_summary_text(source_path, settings, bounds, counts)
+        project_path.with_suffix(".summary.txt").write_text(summary_text, encoding="utf-8")
+        write_project_file(project_path, source_path, settings, summary_text)
+
     def serve_static(self, request_path: str) -> None:
         relative = unquote(request_path.removeprefix("/static/"))
         static_path = (STATIC_DIR / relative).resolve()
@@ -288,6 +502,32 @@ class ViewerHandler(SimpleHTTPRequestHandler):
             self.send_app_error("No file uploaded")
             return
 
+        OUTPUT_DIR.mkdir(exist_ok=True)
+        is_project_upload = Path(upload.filename).suffix.lower() == PROJECT_SUFFIX
+        if is_project_upload:
+            try:
+                project_source_name, project_source_bytes, loaded_settings = load_project_upload(upload)
+                settings = coerce_project_settings(loaded_settings)
+            except ValueError as error:
+                self.send_app_error(str(error))
+                return
+            job_id = uuid.uuid4().hex[:10]
+            source_name = safe_name(project_source_name)
+            uploaded_path = OUTPUT_DIR / f"{Path(source_name).stem}_{job_id}{Path(source_name).suffix.lower()}"
+            uploaded_path.write_bytes(project_source_bytes)
+            html_path = uploaded_path.with_suffix(".html")
+            pes_path = uploaded_path.with_suffix(".pes")
+            project_path = uploaded_path.with_suffix(PROJECT_SUFFIX)
+            try:
+                self.render_design_files(uploaded_path, html_path, pes_path, project_path, settings)
+            except Exception as error:
+                self.send_app_error(str(error))
+                return
+            self.send_response(303)
+            self.send_header("Location", f"/{OUTPUT_DIR.name}/{html_path.name}")
+            self.end_headers()
+            return
+
         fit_width = 90.0
         if "fit_width_mm" in form and form["fit_width_mm"].value:
             try:
@@ -300,7 +540,6 @@ class ViewerHandler(SimpleHTTPRequestHandler):
             fill_spacing = parse_fill_spacing(form, thread_weight)
         except ValueError as error:
             self.send_app_error(str(error))
-            return
             return
         try:
             max_stitch = parse_max_stitch(form)
@@ -336,7 +575,6 @@ class ViewerHandler(SimpleHTTPRequestHandler):
             self.send_app_error("PDF page must be 1 or greater")
             return
 
-        OUTPUT_DIR.mkdir(exist_ok=True)
         name = safe_name(upload.filename)
         job_id = uuid.uuid4().hex[:10]
         uploaded_path = OUTPUT_DIR / f"{Path(name).stem}_{job_id}{Path(name).suffix.lower()}"
@@ -344,78 +582,24 @@ class ViewerHandler(SimpleHTTPRequestHandler):
 
         html_path = uploaded_path.with_suffix(".html")
         pes_path = uploaded_path.with_suffix(".pes")
+        project_path = uploaded_path.with_suffix(PROJECT_SUFFIX)
+        settings = project_settings(
+            fit_width=fit_width,
+            fill_spacing=fill_spacing,
+            thread_weight=thread_weight,
+            max_stitch=max_stitch,
+            fill_mode=fill_mode,
+            fill_angle_deg=fill_angle_deg,
+            max_colors=max_colors,
+            color_merge_distance=color_merge_distance,
+            pdf_page=pdf_page,
+        )
         try:
-            if uploaded_path.suffix.lower() == ".svg":
-                write_svg_as_pes(
-                    uploaded_path,
-                    pes_path,
-                    fit_width_mm=fit_width,
-                    fill_mode=fill_mode,
-                    fill_angle_deg=fill_angle_deg,
-                    fill_spacing_mm=fill_spacing,
-                    thread_weight=thread_weight,
-                    max_stitch_mm=max_stitch,
-                    max_colors=max_colors,
-                    color_merge_distance=color_merge_distance,
-                    pdf_page=pdf_page,
-                )
-                pes_href = pes_path.name
-                html_text, _, _ = build_viewer_html(
-                    uploaded_path,
-                    fit_width_mm=fit_width,
-                    fill_mode=fill_mode,
-                    fill_angle_deg=fill_angle_deg,
-                    fill_spacing_mm=fill_spacing,
-                    thread_weight=thread_weight,
-                    max_stitch_mm=max_stitch,
-                    max_colors=max_colors,
-                    color_merge_distance=color_merge_distance,
-                    pdf_page=pdf_page,
-                    pes_href=pes_href,
-                    color_export_action="/recreate-pes",
-                    source_name=uploaded_path.name,
-                )
-            elif is_raster_source(uploaded_path):
-                write_image_as_pes(
-                    uploaded_path,
-                    pes_path,
-                    fit_width_mm=fit_width,
-                    fill_mode=fill_mode,
-                    fill_angle_deg=fill_angle_deg,
-                    fill_spacing_mm=fill_spacing,
-                    thread_weight=thread_weight,
-                    max_stitch_mm=max_stitch,
-                    max_colors=max_colors,
-                    color_merge_distance=color_merge_distance,
-                    pdf_page=pdf_page,
-                )
-                pes_href = pes_path.name
-                html_text, _, _ = build_viewer_html(
-                    uploaded_path,
-                    fit_width_mm=fit_width,
-                    fill_mode=fill_mode,
-                    fill_angle_deg=fill_angle_deg,
-                    fill_spacing_mm=fill_spacing,
-                    thread_weight=thread_weight,
-                    max_stitch_mm=max_stitch,
-                    max_colors=max_colors,
-                    color_merge_distance=color_merge_distance,
-                    pdf_page=pdf_page,
-                    pes_href=pes_href,
-                    color_export_action="/recreate-pes",
-                    source_name=uploaded_path.name,
-                )
-            else:
-                html_text, _, _ = build_viewer_html(
-                    uploaded_path,
-                    color_export_action="/recreate-pes",
-                    source_name=uploaded_path.name,
-                )
+            self.render_design_files(uploaded_path, html_path, pes_path, project_path, settings)
         except Exception as error:
             self.send_app_error(str(error))
             return
 
-        html_path.write_text(html_text, encoding="utf-8")
         self.send_response(303)
         self.send_header("Location", f"/{OUTPUT_DIR.name}/{html_path.name}")
         self.end_headers()
@@ -527,6 +711,18 @@ class ViewerHandler(SimpleHTTPRequestHandler):
         job_id = uuid.uuid4().hex[:10]
         output_path = source_path.with_name(f"{source_path.stem}_blocks_{selected_label}_{job_id}.pes")
         html_path = output_path.with_suffix(".html")
+        project_path = output_path.with_suffix(PROJECT_SUFFIX)
+        settings = project_settings(
+            fit_width=fit_width,
+            fill_spacing=fill_spacing,
+            thread_weight=thread_weight,
+            max_stitch=max_stitch,
+            fill_mode=fill_mode,
+            fill_angle_deg=fill_angle_deg,
+            max_colors=max_colors,
+            color_merge_distance=color_merge_distance,
+            pdf_page=pdf_page,
+        )
         try:
             write_filtered_pes(
                 source_path,
@@ -545,15 +741,19 @@ class ViewerHandler(SimpleHTTPRequestHandler):
                 color_merge_distance=color_merge_distance,
                 pdf_page=pdf_page,
             )
-            html_text, _, _ = build_viewer_html(
+            html_text, bounds, counts = build_viewer_html(
                 output_path,
                 pes_href=output_path.name,
+                project_href=project_path.name,
                 color_export_action="/recreate-pes",
                 source_name=output_path.name,
                 fill_spacing_mm=fill_spacing,
                 thread_weight=thread_weight,
                 max_stitch_mm=max_stitch,
             )
+            summary_text = project_summary_text(output_path, settings, bounds, counts)
+            project_path.with_suffix(".summary.txt").write_text(summary_text, encoding="utf-8")
+            write_project_file(project_path, output_path, settings, summary_text)
         except Exception as error:
             self.send_app_error(str(error))
             return
@@ -649,18 +849,24 @@ class ViewerHandler(SimpleHTTPRequestHandler):
 
         project_stem = safe_name(pes_path.stem).removesuffix(".pes")
         zip_name = f"{project_stem}_project.zip"
+        summary_path = pes_path.with_suffix(".summary.txt")
+        if summary_path.exists():
+            summary_text = summary_path.read_text(encoding="utf-8", errors="replace")
+        else:
+            summary_text = f"OpenStitch project summary\n\nDesign: {pes_path.name}\n"
         zip_buffer = io.BytesIO()
         with zipfile.ZipFile(zip_buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
             archive.write(pes_path, arcname=pes_path.name)
             archive.writestr("thread-shopping-list.txt", shopping_text)
+            archive.writestr("project-summary.txt", summary_text)
 
         message = EmailMessage()
-        message["Subject"] = f"Embroidery project: {pes_path.stem}"
+        message["Subject"] = f"OpenStitch project: {pes_path.stem}"
         if recipient_email:
             message["To"] = recipient_email
         message["X-Unsent"] = "1"
         message.set_content(
-            "Attached is the embroidery project ZIP with the PES file and thread shopping list.\n"
+            "Attached is the OpenStitch project ZIP with the PES file, thread shopping list, and project summary.\n"
         )
         message.add_attachment(
             zip_buffer.getvalue(),

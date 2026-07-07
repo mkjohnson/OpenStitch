@@ -39,7 +39,7 @@ def main() -> int:
         webbrowser.open(url)
 
     threading.Thread(target=open_browser, daemon=True).start()
-    print(f"Embroidery Utility is running at {url}")
+    print(f"OpenStitch is running at {url}")
     print("Close this window to stop the app.")
     try:
         server.serve_forever()

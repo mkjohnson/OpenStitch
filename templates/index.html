@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Embroidery Utility</title>
+  <title>OpenStitch</title>
   <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
@@ -11,7 +11,7 @@
     <div class="menu-overlay" data-menu-overlay></div>
     <aside class="sidebar">
       <div class="brand">
-        <strong>Embroidery Utility</strong>
+        <strong>OpenStitch</strong>
         <span>Convert, preview, filter, export</span>
       </div>
       <nav class="nav">
@@ -24,7 +24,7 @@
       <div class="topbar">
         <button class="menu-button" type="button" data-menu-toggle aria-label="Open menu">&#9776;</button>
         <div class="topbar-title">
-          <strong>Embroidery Utility</strong>
+          <strong>OpenStitch</strong>
           <span>Import</span>
         </div>
       </div>
@@ -34,9 +34,9 @@
         <form class="upload-form" method="post" action="/convert" enctype="multipart/form-data">
           <label>
             Design file
-            <input name="design" type="file" accept=".svg,.pes,.jpg,.jpeg,.png,.pdf,image/svg+xml,image/jpeg,image/png,application/pdf" required>
+            <input name="design" type="file" accept=".embdproj,.svg,.pes,.jpg,.jpeg,.png,.pdf,image/svg+xml,image/jpeg,image/png,application/pdf" required>
           </label>
-          <p class="hint">Supported files: SVG, PES, JPG, JPEG, PNG, and PDF.</p>
+          <p class="hint">Supported files: OpenStitch projects, SVG, PES, JPG, JPEG, PNG, and PDF.</p>
           <div class="field-grid">
             <label>
               Thread weight

@@ -708,6 +708,7 @@ def render_html(
     pes_href: str | None = None,
     color_export_action: str | None = None,
     source_name: str | None = None,
+    project_href: str | None = None,
     fit_width_mm: float | None = None,
     fill_mode: str = "tatami",
     fill_angle_deg: float = 45.0,
@@ -797,6 +798,7 @@ def render_html(
     embedded_inventory = html.escape(json.dumps(inventory_data, separators=(",", ":")), quote=False)
     pes_download = ""
     email_project = ""
+    project_download = ""
     if pes_href:
         pes_download = (
             '<a class="download-action" href="{href}" download>Download PES</a>'.format(
@@ -812,6 +814,12 @@ def render_html(
             '<button class="download-action" type="submit">Email Project</button>'
             '</form>'
         ).format(href=html.escape(pes_href, quote=True))
+    if project_href:
+        project_download = (
+            '<a class="download-action" href="{href}" download>Save Project</a>'.format(
+                href=html.escape(project_href, quote=True)
+            )
+        )
     export_open = ""
     export_close = ""
     export_button = ""
@@ -1649,6 +1657,7 @@ def render_html(
         <a href="/library">Library</a>
         <a href="/inventory">Thread Inventory</a>
         {pes_download}
+        {project_download}
         {email_project}
       </nav>
       {thread_plan}
@@ -1661,6 +1670,7 @@ def render_html(
     </section>
     {density_warning}
     {pes_download}
+    {project_download}
     <section class="playback" aria-label="Stitch playback controls">
       <div class="transport">
         <button id="play-toggle" type="button">Play</button>
@@ -2765,6 +2775,7 @@ def build_viewer_html(
     pes_href: str | None = None,
     color_export_action: str | None = None,
     source_name: str | None = None,
+    project_href: str | None = None,
 ) -> tuple[str, tuple[float, float, float, float], dict]:
     pattern = None
     if input_file.suffix.lower() == ".svg" and not svg_needs_rasterization(input_file):
@@ -2820,6 +2831,7 @@ def build_viewer_html(
         pes_href=pes_href,
         color_export_action=color_export_action,
         source_name=source_name,
+        project_href=project_href,
         fit_width_mm=fit_width_mm,
         fill_mode=fill_mode,
         fill_angle_deg=fill_angle_deg,

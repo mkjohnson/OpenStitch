@@ -14,11 +14,11 @@ if (-not (Test-Path ".venv")) {
     --clean `
     --noconfirm `
     --onefile `
-    --name "EmbroideryUtility" `
+    --name "OpenStitch" `
     --add-data "templates;templates" `
     --add-data "static;static" `
     app_launcher.py
 
 Write-Host ""
-Write-Host "Built: $repo\dist\EmbroideryUtility.exe"
+Write-Host "Built: $repo\dist\OpenStitch.exe"
 Write-Host "Share that EXE with the person using the app. It will create viewer_output beside itself."
