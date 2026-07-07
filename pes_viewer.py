@@ -10,6 +10,7 @@ import pyembroidery as embroidery
 
 from image_digitizer import image_to_segments, is_raster_source, svg_needs_rasterization, write_image_as_pes
 from svg2brother import extract_runs, transform_runs, positive_float, write_embroidery, make_thread
+from thread_catalog import load_thread_catalog
 from thread_inventory import closest_inventory_match, load_inventory, normalize_hex, rgb_distance
 
 
@@ -266,7 +267,11 @@ def inventory_label(item: dict) -> str:
 
 def render_inventory_options() -> str:
     options = ['<option value="">Known thread colors</option>']
-    for item in load_inventory():
+    inventory = load_inventory()
+    catalog = load_thread_catalog()
+    if inventory:
+        options.append('<optgroup label="Your inventory">')
+    for item in inventory:
         label = f'{inventory_label(item)} - {item["color"]}'
         options.append(
             '<option value="{color}">{label}</option>'.format(
@@ -274,6 +279,20 @@ def render_inventory_options() -> str:
                 label=html.escape(label),
             )
         )
+    if inventory:
+        options.append("</optgroup>")
+    if catalog:
+        options.append('<optgroup label="Floriani polyester">')
+    for item in catalog:
+        label = f'{item["brand"]} {item["number"]} {item["name"]} - {item["color"]}'
+        options.append(
+            '<option value="{color}">{label}</option>'.format(
+                color=html.escape(item["color"], quote=True),
+                label=html.escape(label),
+            )
+        )
+    if catalog:
+        options.append("</optgroup>")
     return "".join(options)
 
 
