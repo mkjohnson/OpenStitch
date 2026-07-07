@@ -289,7 +289,8 @@ def split_long_point_span(
     max_stitch_mm: float,
 ) -> list[tuple[float, float]]:
     span = point_distance(start, end)
-    steps = max(1, int(math.ceil(span / max(max_stitch_mm, 0.1))))
+    safe_max_stitch_mm = max(max_stitch_mm - 0.2, 0.1)
+    steps = max(1, int(math.ceil(span / safe_max_stitch_mm)))
     return [
         (
             start[0] + (end[0] - start[0]) * (step / steps),
