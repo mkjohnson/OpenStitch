@@ -451,33 +451,26 @@ def render_thread_plan(color_blocks: list[dict], usage_by_block: dict[int, float
         f"Estimated total thread: {format_usage(total_meters)} including 12% allowance. "
         f"Colors to buy: {len(set(needed))}."
     )
-    if shopping:
-        shopping_lines = ["Thread shopping list", ""]
-        for item in sorted(shopping.values(), key=lambda entry: entry["label"]):
-            design_colors = ", ".join(sorted(item["design_colors"]))
-            shopping_lines.append(
-                f'- {item["label"]} ({item["color"]}) - {format_usage(item["meters"])} estimated - for {design_colors}'
-            )
-        shopping_text = "\n".join(shopping_lines)
-        shopping_html = (
-            '<div class="shopping-list">'
-            '<h3>Shopping List</h3>'
-            '<textarea id="shopping-list-text" readonly>'
-            f'{html.escape(shopping_text)}'
-            '</textarea>'
-            '<div class="shopping-actions">'
-            '<button id="copy-shopping-list" type="button">Copy List</button>'
-            '<button id="download-shopping-list" type="button">Download TXT</button>'
-            '</div>'
-            '</div>'
+    shopping_lines = ["Thread shopping list", ""]
+    for item in sorted(shopping.values(), key=lambda entry: entry["label"]):
+        design_colors = ", ".join(sorted(item["design_colors"]))
+        shopping_lines.append(
+            f'- {item["label"]} ({item["color"]}) - {format_usage(item["meters"])} estimated - for {design_colors}'
         )
-    else:
-        shopping_html = (
-            '<div class="shopping-list">'
-            '<h3>Shopping List</h3>'
-            '<p>All design colors have close inventory matches.</p>'
-            '</div>'
-        )
+    shopping_text = "\n".join(shopping_lines) if shopping else ""
+    shopping_empty_class = "" if not shopping else " hidden"
+    shopping_text_class = "" if shopping else " hidden"
+    shopping_html = (
+        '<div class="shopping-list">'
+        '<h3>Shopping List</h3>'
+        f'<p id="shopping-list-empty" class="shopping-empty{shopping_empty_class}">All design colors have close inventory matches.</p>'
+        f'<textarea id="shopping-list-text" class="{shopping_text_class}" readonly>{html.escape(shopping_text)}</textarea>'
+        '<div class="shopping-actions">'
+        f'<button id="copy-shopping-list" type="button" {"disabled" if not shopping else ""}>Copy List</button>'
+        f'<button id="download-shopping-list" type="button" {"disabled" if not shopping else ""}>Download TXT</button>'
+        '</div>'
+        '</div>'
+    )
     return (
         '<section class="thread-plan">'
         '<h2>Thread Planning</h2>'
@@ -626,9 +619,23 @@ def render_html(
         if command["command"] in {"trim", "color_change"}
     ]
     palette_data = [block["color"] for block in color_blocks]
+    usage_data = {
+        str(block["index"]): round(usage_by_block.get(block["index"], 0.0), 4)
+        for block in color_blocks
+    }
+    inventory_data = [
+        {
+            "label": inventory_label(item),
+            "color": item["color"],
+            "quantity": item["quantity"],
+        }
+        for item in load_inventory()
+    ]
     embedded_segments = html.escape(json.dumps(segment_data, separators=(",", ":")), quote=False)
     embedded_markers = html.escape(json.dumps(marker_data, separators=(",", ":")), quote=False)
     embedded_palette = html.escape(json.dumps(palette_data, separators=(",", ":")), quote=False)
+    embedded_usage = html.escape(json.dumps(usage_data, separators=(",", ":")), quote=False)
+    embedded_inventory = html.escape(json.dumps(inventory_data, separators=(",", ":")), quote=False)
     pes_download = ""
     if pes_href:
         pes_download = (
@@ -851,6 +858,13 @@ def render_html(
       min-height: 32px;
       padding: 0 8px;
       font-size: 12px;
+    }}
+    .shopping-actions button:disabled {{
+      opacity: 0.55;
+      cursor: not-allowed;
+    }}
+    .hidden {{
+      display: none !important;
     }}
     .inventory-link {{
       color: #2f6f73;
@@ -1377,6 +1391,8 @@ def render_html(
   <script id="segment-data" type="application/json">{embedded_segments}</script>
   <script id="marker-data" type="application/json">{embedded_markers}</script>
   <script id="palette-data" type="application/json">{embedded_palette}</script>
+  <script id="usage-data" type="application/json">{embedded_usage}</script>
+  <script id="inventory-data" type="application/json">{embedded_inventory}</script>
   <script>
     const jumps = document.getElementById("toggle-jumps");
     const points = document.getElementById("toggle-points");
@@ -1397,12 +1413,15 @@ def render_html(
     const sidebarResizer = document.getElementById("sidebar-resizer");
     const threadFloaterToggle = document.getElementById("thread-floater-toggle");
     const shoppingListText = document.getElementById("shopping-list-text");
+    const shoppingListEmpty = document.getElementById("shopping-list-empty");
     const copyShoppingList = document.getElementById("copy-shopping-list");
     const downloadShoppingList = document.getElementById("download-shopping-list");
     const ctx = toolpath.getContext("2d");
     const segments = JSON.parse(document.getElementById("segment-data").textContent);
     const markerData = JSON.parse(document.getElementById("marker-data").textContent);
     const palette = JSON.parse(document.getElementById("palette-data").textContent);
+    const usageByBlock = JSON.parse(document.getElementById("usage-data").textContent);
+    const inventoryThreads = JSON.parse(document.getElementById("inventory-data").textContent);
     const markerColors = {{
       trim: {{ fill: "#f97316", stroke: "#7c2d12" }},
       color_change: {{ fill: "#2563eb", stroke: "#172554" }},
@@ -1434,6 +1453,7 @@ def render_html(
             group: option.parentElement && option.parentElement.tagName === "OPTGROUP" ? option.parentElement.label : "",
           }}))
       : [];
+    const florianiThreadOptions = knownThreadOptions.filter((option) => option.group === "Floriani polyester");
     let selectedBlocks = new Set(blockToggles.map((toggle) => Number(toggle.value)));
     const maxStep = {max_step};
     const initialViewBox = JSON.parse(toolpath.dataset.initialViewbox);
@@ -1598,6 +1618,7 @@ def render_html(
         colorOrderInput.value = orderedBlocks.join(",");
       }}
       syncColorOverrides();
+      updateShoppingList();
       renderScene();
     }}
 
@@ -1627,6 +1648,67 @@ def render_html(
       const second = hexToRgb(b);
       if (!first || !second) return Number.POSITIVE_INFINITY;
       return Math.hypot(first[0] - second[0], first[1] - second[1], first[2] - second[2]);
+    }}
+
+    function formatUsage(meters) {{
+      if (meters < 1) return `${{Math.round(meters * 100)}} cm`;
+      return `${{meters.toFixed(2)}} m`;
+    }}
+
+    function closestThreadOption(color, options) {{
+      if (!options.length) return null;
+      return options
+        .map((option) => ({{
+          ...option,
+          distance: colorDistance(color, option.value),
+        }}))
+        .sort((a, b) => a.distance - b.distance || a.label.localeCompare(b.label))[0];
+    }}
+
+    function cleanThreadLabel(label) {{
+      return label.replace(/ - match \\d+$/, "");
+    }}
+
+    function updateShoppingList() {{
+      if (!shoppingListText) return;
+      const inventoryOptions = inventoryThreads.map((item) => ({{
+        value: item.color,
+        label: `${{item.label}} - ${{item.color}}`,
+        group: "Your inventory",
+      }}));
+      const shopping = new Map();
+      for (const blockIndex of selectedBlocks) {{
+        const color = palette[blockIndex];
+        const inventoryMatch = closestThreadOption(color, inventoryOptions);
+        if (inventoryMatch && inventoryMatch.distance <= 64) continue;
+        const florianiMatch = closestThreadOption(color, florianiThreadOptions);
+        if (!florianiMatch) continue;
+        const label = cleanThreadLabel(florianiMatch.label);
+        const existing = shopping.get(label) || {{
+          label,
+          color: florianiMatch.value,
+          meters: 0,
+          designColors: new Set(),
+        }};
+        existing.meters += Number(usageByBlock[String(blockIndex)] || 0);
+        existing.designColors.add(color);
+        shopping.set(label, existing);
+      }}
+      const items = [...shopping.values()].sort((a, b) => a.label.localeCompare(b.label));
+      const hasItems = items.length > 0;
+      shoppingListText.value = hasItems
+        ? [
+            "Thread shopping list",
+            "",
+            ...items.map((item) => (
+              `- ${{item.label}} (${{item.color}}) - ${{formatUsage(item.meters)}} estimated - for ${{[...item.designColors].sort().join(", ")}}`
+            )),
+          ].join("\\n")
+        : "";
+      shoppingListText.classList.toggle("hidden", !hasItems);
+      if (shoppingListEmpty) shoppingListEmpty.classList.toggle("hidden", hasItems);
+      if (copyShoppingList) copyShoppingList.disabled = !hasItems;
+      if (downloadShoppingList) downloadShoppingList.disabled = !hasItems;
     }}
 
     function sortThreadSelect(select, targetColor) {{
@@ -1694,6 +1776,7 @@ def render_html(
         sortThreadSelect(select, normalized);
       }}
       syncColorOverrides();
+      updateShoppingList();
       renderScene();
     }}
 
