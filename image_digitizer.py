@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import base64
+import colorsys
 import io
 import re
 import tempfile
@@ -120,6 +121,22 @@ def color_distance(a: tuple[int, int, int], b: tuple[int, int, int]) -> float:
     )
 
 
+def colors_can_merge(a: tuple[int, int, int], b: tuple[int, int, int], merge_distance: float) -> bool:
+    if color_distance(a, b) > merge_distance:
+        return False
+    a_lightness = max(a)
+    b_lightness = max(b)
+    if a_lightness < 55 and b_lightness < 55:
+        return True
+    ah, al, asat = colorsys.rgb_to_hls(a[0] / 255, a[1] / 255, a[2] / 255)
+    bh, bl, bsat = colorsys.rgb_to_hls(b[0] / 255, b[1] / 255, b[2] / 255)
+    if asat < 0.16 or bsat < 0.16:
+        return abs(al - bl) <= 0.18
+    hue_delta = abs(ah - bh)
+    hue_delta = min(hue_delta, 1 - hue_delta)
+    return hue_delta <= 0.08
+
+
 def merge_similar_palette_colors(
     palette_image: Image.Image,
     colors: list[tuple[int, int, int]],
@@ -147,7 +164,7 @@ def merge_similar_palette_colors(
         best_distance = merge_distance
         for group_index, group in enumerate(groups):
             distance = color_distance(color, group["color"])
-            if distance <= best_distance:
+            if distance <= best_distance and colors_can_merge(color, group["color"], merge_distance):
                 best_group = group_index
                 best_distance = distance
 
