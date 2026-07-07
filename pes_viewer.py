@@ -2445,10 +2445,11 @@ def collect_svg_segments(
         if run.color != active_color:
             if active_color is not None:
                 counts["color_changes"] += 1
+                marker_x, marker_y = previous_point or run.points_mm[0]
                 commands.append(
                     {
-                        "x": run.points_mm[0][0],
-                        "y": run.points_mm[0][1],
+                        "x": marker_x,
+                        "y": marker_y,
                         "command": "color_change",
                         "color": len(color_blocks),
                         "step": counts["needle_points"],
@@ -2468,6 +2469,16 @@ def collect_svg_segments(
         assert active_block is not None
         first = run.points_mm[0]
         if previous_point is not None and math.hypot(previous_point[0] - first[0], previous_point[1] - first[1]) > 0.001:
+            counts["trims"] += 1
+            commands.append(
+                {
+                    "x": previous_point[0],
+                    "y": previous_point[1],
+                    "command": "trim",
+                    "color": active_block["thread"],
+                    "step": counts["needle_points"],
+                }
+            )
             counts["jumps"] += 1
             segments.append(
                 {
@@ -2475,7 +2486,7 @@ def collect_svg_segments(
                     "y1": previous_point[1],
                     "x2": first[0],
                     "y2": first[1],
-                    "kind": pending_travel or "jump",
+                    "kind": pending_travel or "travel_after_trim",
                     "color": active_block["color"],
                     "colorIndex": active_block["thread"],
                     "blockIndex": active_block["index"],

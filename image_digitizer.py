@@ -405,6 +405,16 @@ def image_to_segments(
                         "step": counts["needle_points"],
                     }
                 )
+            counts["trims"] += 1
+            commands.append(
+                {
+                    "x": previous_point[0],
+                    "y": previous_point[1],
+                    "command": "trim",
+                    "color": block["thread"],
+                    "step": counts["needle_points"],
+                }
+            )
             commands.append({"x": x1, "y": y1, "command": "jump", "color": block["thread"], "step": counts["needle_points"]})
             counts["jumps"] += 1
             segments.append(
@@ -413,7 +423,7 @@ def image_to_segments(
                     "y1": previous_point[1],
                     "x2": x1,
                     "y2": y1,
-                    "kind": pending_travel or "jump",
+                    "kind": pending_travel or "travel_after_trim",
                     "color": block["color"],
                     "colorIndex": block["thread"],
                     "blockIndex": block["index"],
