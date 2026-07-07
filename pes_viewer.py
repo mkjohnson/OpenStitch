@@ -1731,6 +1731,10 @@ def render_html(
       return kind === "color_change" ? "Color change" : "Trim";
     }}
 
+    function markerRadiusFor(kind) {{
+      return kind === "color_change" ? Math.max(4.8, deviceScale * 4.8) : Math.max(3, deviceScale * 3.2);
+    }}
+
     function shouldShowMarker(kind) {{
       if (kind === "trim") return showTrims;
       if (kind === "color_change") return showColorChanges;
@@ -1749,12 +1753,13 @@ def render_html(
       const px = toCanvasX(point.x);
       const py = toCanvasY(point.y);
       const zoom = initialViewBox.width / viewBoxState.width;
-      const markerRadius = Math.max(8, deviceScale * 5);
-      for (const marker of markerData) {{
-        if (!shouldShowMarker(marker[2]) || marker[3] > currentStep) continue;
-        const distance = Math.hypot(px - toCanvasX(marker[0]), py - toCanvasY(marker[1]));
-        if (distance <= markerRadius) {{
-          return `${{markerKindName(marker[2])}}<br>Step ${{marker[3]}}<br>${{formatPoint(marker[0], marker[1])}}`;
+      for (const markerKind of ["color_change", "trim"]) {{
+        for (const marker of markerData) {{
+          if (marker[2] !== markerKind || !shouldShowMarker(marker[2]) || marker[3] > currentStep) continue;
+          const distance = Math.hypot(px - toCanvasX(marker[0]), py - toCanvasY(marker[1]));
+          if (distance <= Math.max(8, markerRadiusFor(marker[2]) + 3)) {{
+            return `${{markerKindName(marker[2])}}<br>Step ${{marker[3]}}<br>${{formatPoint(marker[0], marker[1])}}`;
+          }}
         }}
       }}
       if (showPoints && (currentStep <= 20000 || zoom >= 2)) {{
@@ -1854,18 +1859,20 @@ def render_html(
         }}
       }}
 
-      for (const marker of markerData) {{
-        if (!shouldShowMarker(marker[2]) || marker[3] > currentStep) continue;
-        const x = toCanvasX(marker[0]);
-        const y = toCanvasY(marker[1]);
-        const markerColor = markerColors[marker[2]] || {{ fill: "#64748b", stroke: "#1f2937" }};
-        ctx.beginPath();
-        ctx.fillStyle = markerColor.fill;
-        ctx.strokeStyle = markerColor.stroke;
-        ctx.lineWidth = Math.max(0.8, deviceScale);
-        ctx.arc(x, y, Math.max(3, deviceScale * 3.2), 0, Math.PI * 2);
-        ctx.fill();
-        ctx.stroke();
+      for (const markerKind of ["trim", "color_change"]) {{
+        for (const marker of markerData) {{
+          if (marker[2] !== markerKind || !shouldShowMarker(marker[2]) || marker[3] > currentStep) continue;
+          const x = toCanvasX(marker[0]);
+          const y = toCanvasY(marker[1]);
+          const markerColor = markerColors[marker[2]] || {{ fill: "#64748b", stroke: "#1f2937" }};
+          ctx.beginPath();
+          ctx.fillStyle = markerColor.fill;
+          ctx.strokeStyle = markerColor.stroke;
+          ctx.lineWidth = marker[2] === "color_change" ? Math.max(1.4, deviceScale * 1.4) : Math.max(0.8, deviceScale);
+          ctx.arc(x, y, markerRadiusFor(marker[2]), 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+        }}
       }}
     }}
 
