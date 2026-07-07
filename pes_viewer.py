@@ -688,6 +688,8 @@ def render_html(
         )
         email_project = (
             '<form id="email-project-form" class="menu-email-form" method="post" action="/email-project">'
+            '<input class="menu-email-input" type="email" name="recipient_email" '
+            'placeholder="Email address" aria-label="Email project recipient">'
             '<input type="hidden" name="pes_file" value="{href}">'
             '<input id="email-shopping-list" type="hidden" name="shopping_list" value="">'
             '<button class="download-action" type="submit">Email Project</button>'
@@ -1245,6 +1247,17 @@ def render_html(
     }}
     .menu-email-form {{
       display: grid;
+      gap: 6px;
+    }}
+    .menu-email-input {{
+      width: 100%;
+      min-height: 36px;
+      padding: 0 10px;
+      border: 1px solid #c9d2cd;
+      border-radius: 6px;
+      color: #172026;
+      font: inherit;
+      font-size: 13px;
     }}
     .menu-email-form button {{
       width: 100%;

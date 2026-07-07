@@ -626,6 +626,7 @@ class ViewerHandler(SimpleHTTPRequestHandler):
         shopping_text = form["shopping_list"].value if "shopping_list" in form else ""
         if not shopping_text.strip():
             shopping_text = "Thread shopping list\n\nAll design colors have close inventory matches.\n"
+        recipient_email = form["recipient_email"].value.strip() if "recipient_email" in form else ""
 
         project_stem = safe_name(pes_path.stem).removesuffix(".pes")
         zip_name = f"{project_stem}_project.zip"
@@ -636,8 +637,9 @@ class ViewerHandler(SimpleHTTPRequestHandler):
 
         message = EmailMessage()
         message["Subject"] = f"Embroidery project: {pes_path.stem}"
-        message["To"] = ""
-        message["From"] = ""
+        if recipient_email:
+            message["To"] = recipient_email
+        message["X-Unsent"] = "1"
         message.set_content(
             "Attached is the embroidery project ZIP with the PES file and thread shopping list.\n"
         )
