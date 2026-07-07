@@ -303,7 +303,7 @@ class ViewerHandler(SimpleHTTPRequestHandler):
 
         html_path.write_text(html_text, encoding="utf-8")
         self.send_response(303)
-        self.send_header("Location", f"/{html_path.as_posix()}")
+        self.send_header("Location", f"/{OUTPUT_DIR.name}/{html_path.name}")
         self.end_headers()
 
     def recreate_pes(self) -> None:
@@ -395,7 +395,9 @@ class ViewerHandler(SimpleHTTPRequestHandler):
             return
 
         selected_label = "-".join(str(index + 1) for index in sorted(selected_blocks))
-        output_path = source_path.with_name(f"{source_path.stem}_blocks_{selected_label}.pes")
+        job_id = uuid.uuid4().hex[:10]
+        output_path = source_path.with_name(f"{source_path.stem}_blocks_{selected_label}_{job_id}.pes")
+        html_path = output_path.with_suffix(".html")
         try:
             write_filtered_pes(
                 source_path,
@@ -411,39 +413,20 @@ class ViewerHandler(SimpleHTTPRequestHandler):
                 color_merge_distance=color_merge_distance,
                 pdf_page=pdf_page,
             )
+            html_text, _, _ = build_viewer_html(
+                output_path,
+                pes_href=output_path.name,
+                color_export_action="/recreate-pes",
+                source_name=output_path.name,
+            )
         except Exception as error:
             self.send_app_error(str(error))
             return
 
-        download_href = f"/{OUTPUT_DIR.name}/{output_path.name}"
-        body = f"""<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Recreated PES</title>
-  <style>
-    :root {{ font-family: Inter, Segoe UI, Arial, sans-serif; color: #172026; background: #f7f8f5; }}
-    body {{ margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px; }}
-    main {{ width: min(520px, 100%); background: #ffffff; border: 1px solid #d9ded6; border-radius: 8px; padding: 24px; }}
-    h1 {{ margin: 0 0 12px; font-size: 24px; }}
-    p {{ color: #52605a; }}
-    a {{ min-height: 40px; display: inline-flex; align-items: center; justify-content: center; padding: 0 14px; border: 1px solid #2f6f73; border-radius: 6px; background: #2f6f73; color: #ffffff; font-weight: 700; text-decoration: none; }}
-  </style>
-</head>
-<body>
-  <main>
-    <h1>Recreated PES</h1>
-    <p>Saved selected color blocks as <strong>{html.escape(output_path.name)}</strong>.</p>
-    <a href="{html.escape(download_href, quote=True)}" download>Download PES</a>
-  </main>
-</body>
-</html>
-"""
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
+        html_path.write_text(html_text, encoding="utf-8")
+        self.send_response(303)
+        self.send_header("Location", f"/{OUTPUT_DIR.name}/{html_path.name}")
         self.end_headers()
-        self.wfile.write(body.encode("utf-8"))
 
     def add_thread_inventory(self) -> None:
         form = cgi.FieldStorage(
