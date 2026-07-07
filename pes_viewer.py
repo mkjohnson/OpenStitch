@@ -1238,6 +1238,15 @@ def render_html(
     const orderButtons = [...document.querySelectorAll("[data-order-move]")];
     const colorInputs = [...document.querySelectorAll("[data-block-color]")];
     const threadSelects = [...document.querySelectorAll("[data-block-select]")];
+    const knownThreadOptions = threadSelects.length
+      ? [...threadSelects[0].querySelectorAll("option")]
+          .filter((option) => option.value)
+          .map((option) => ({{
+            value: option.value,
+            label: option.textContent,
+            group: option.parentElement && option.parentElement.tagName === "OPTGROUP" ? option.parentElement.label : "",
+          }}))
+      : [];
     let selectedBlocks = new Set(blockToggles.map((toggle) => Number(toggle.value)));
     const maxStep = {max_step};
     const initialViewBox = JSON.parse(toolpath.dataset.initialViewbox);
@@ -1416,6 +1425,50 @@ def render_html(
       return null;
     }}
 
+    function hexToRgb(value) {{
+      const color = normalizeHex(value);
+      if (!color) return null;
+      return [
+        Number.parseInt(color.slice(1, 3), 16),
+        Number.parseInt(color.slice(3, 5), 16),
+        Number.parseInt(color.slice(5, 7), 16),
+      ];
+    }}
+
+    function colorDistance(a, b) {{
+      const first = hexToRgb(a);
+      const second = hexToRgb(b);
+      if (!first || !second) return Number.POSITIVE_INFINITY;
+      return Math.hypot(first[0] - second[0], first[1] - second[1], first[2] - second[2]);
+    }}
+
+    function sortThreadSelect(select, targetColor) {{
+      if (!select || knownThreadOptions.length === 0) return;
+      const currentValue = select.value;
+      const sorted = knownThreadOptions
+        .map((option) => ({{
+          ...option,
+          distance: colorDistance(targetColor, option.value),
+        }}))
+        .sort((a, b) => a.distance - b.distance || a.label.localeCompare(b.label));
+      select.replaceChildren(new Option("Closest known thread colors", ""));
+      for (const option of sorted) {{
+        const distance = Number.isFinite(option.distance) ? Math.round(option.distance) : "?";
+        const label = `${{option.label}} - match ${{distance}}`;
+        const node = new Option(label, option.value);
+        if (option.group) node.dataset.group = option.group;
+        select.add(node);
+      }}
+      select.value = currentValue;
+    }}
+
+    function sortAllThreadSelects() {{
+      for (const select of threadSelects) {{
+        const blockIndex = Number(select.dataset.blockSelect);
+        sortThreadSelect(select, palette[blockIndex]);
+      }}
+    }}
+
     function syncColorOverrides() {{
       if (!colorOverridesInput) return;
       const overrides = {{}};
@@ -1436,9 +1489,11 @@ def render_html(
         const swatch = row.querySelector(".swatch");
         const code = row.querySelector("code");
         const input = row.querySelector("[data-block-color]");
+        const select = row.querySelector("[data-block-select]");
         if (swatch) swatch.style.background = normalized;
         if (code) code.textContent = normalized;
         if (input) input.value = normalized;
+        sortThreadSelect(select, normalized);
       }}
       syncColorOverrides();
       renderScene();
@@ -1621,6 +1676,7 @@ def render_html(
         }}
       }});
     }}
+    sortAllThreadSelects();
     window.addEventListener("resize", resizeCanvas);
     syncSelectedBlocks();
     resetZoom();
