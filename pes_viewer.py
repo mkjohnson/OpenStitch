@@ -1033,8 +1033,8 @@ def render_html(
       stroke-width: 0.12;
       opacity: 0.85;
     }}
-    .trim {{ fill: #f6a623; stroke: #6c4710; }}
-    .color_change {{ fill: #ffffff; stroke: #243335; }}
+    .trim {{ fill: #f97316; stroke: #7c2d12; }}
+    .color_change {{ fill: #2563eb; stroke: #172554; }}
     body.hide-jumps .jump {{ display: none; }}
     body.hide-markers .marker {{ display: none; }}
     body.hide-points .needle-point {{ display: none; }}
@@ -1153,6 +1153,10 @@ def render_html(
     const segments = JSON.parse(document.getElementById("segment-data").textContent);
     const markerData = JSON.parse(document.getElementById("marker-data").textContent);
     const palette = JSON.parse(document.getElementById("palette-data").textContent);
+    const markerColors = {{
+      trim: {{ fill: "#f97316", stroke: "#7c2d12" }},
+      color_change: {{ fill: "#2563eb", stroke: "#172554" }},
+    }};
     const thumbnailMode = new URLSearchParams(window.location.search).get("embed") === "thumbnail";
     if (thumbnailMode) {{
       document.body.classList.add("thumbnail-mode", "hide-jumps", "hide-markers");
@@ -1263,9 +1267,10 @@ def render_html(
           if (marker[3] > currentStep) continue;
           const x = toCanvasX(marker[0]);
           const y = toCanvasY(marker[1]);
+          const markerColor = markerColors[marker[2]] || {{ fill: "#64748b", stroke: "#1f2937" }};
           ctx.beginPath();
-          ctx.fillStyle = marker[2] === "trim" ? "#f6a623" : "#ffffff";
-          ctx.strokeStyle = marker[2] === "trim" ? "#6c4710" : "#243335";
+          ctx.fillStyle = markerColor.fill;
+          ctx.strokeStyle = markerColor.stroke;
           ctx.lineWidth = Math.max(0.8, deviceScale);
           ctx.arc(x, y, Math.max(3, deviceScale * 3.2), 0, Math.PI * 2);
           ctx.fill();
