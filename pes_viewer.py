@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pyembroidery as embroidery
 
-from image_digitizer import image_to_segments, is_raster_source, svg_needs_rasterization, write_image_as_pes
-from svg2brother import extract_runs, transform_runs, positive_float, write_embroidery, make_thread
+from image_digitizer import image_to_segments, is_raster_source, svg_needs_rasterization
+from svg2brother import extract_runs, transform_runs, positive_float, make_thread
 from thread_catalog import load_thread_catalog
 from thread_inventory import closest_inventory_match, load_inventory, normalize_hex, rgb_distance
 
@@ -273,6 +273,81 @@ def estimate_stitch_time(counts: dict, color_blocks: list[dict]) -> str:
     if minutes:
         return f"{minutes} min {seconds} sec"
     return f"{seconds} sec"
+
+
+def point_distance(a: tuple[float, float], b: tuple[float, float]) -> float:
+    return math.hypot(a[0] - b[0], a[1] - b[1])
+
+
+def points_match(a: tuple[float, float], b: tuple[float, float], tolerance: float = 0.001) -> bool:
+    return abs(a[0] - b[0]) <= tolerance and abs(a[1] - b[1]) <= tolerance
+
+
+def split_long_point_span(
+    start: tuple[float, float],
+    end: tuple[float, float],
+    max_stitch_mm: float,
+) -> list[tuple[float, float]]:
+    span = point_distance(start, end)
+    steps = max(1, int(math.ceil(span / max(max_stitch_mm, 0.1))))
+    return [
+        (
+            start[0] + (end[0] - start[0]) * (step / steps),
+            start[1] + (end[1] - start[1]) * (step / steps),
+        )
+        for step in range(1, steps + 1)
+    ]
+
+
+def clean_run_points(
+    points: list[tuple[float, float]],
+    *,
+    min_stitch_mm: float = 0.35,
+    max_stitch_mm: float = 7.0,
+    lock_stitch_mm: float = 0.7,
+) -> list[tuple[float, float]]:
+    if len(points) < 2:
+        return points
+
+    deduped = [points[0]]
+    for point in points[1:]:
+        if point_distance(deduped[-1], point) >= min_stitch_mm:
+            deduped.append(point)
+    if len(deduped) < 2:
+        return []
+
+    split_points = [deduped[0]]
+    for start, end in zip(deduped, deduped[1:]):
+        split_points.extend(split_long_point_span(start, end, max_stitch_mm))
+    if len(split_points) < 2:
+        return []
+
+    first = split_points[0]
+    second = split_points[1]
+    first_span = point_distance(first, second)
+    if first_span > lock_stitch_mm + 0.001:
+        unit_x = (second[0] - first[0]) / first_span
+        unit_y = (second[1] - first[1]) / first_span
+        lock = (
+            first[0] + unit_x * lock_stitch_mm,
+            first[1] + unit_y * lock_stitch_mm,
+        )
+        split_points = [first, lock, first, *split_points[1:]]
+
+    if len(split_points) >= 2:
+        last = split_points[-1]
+        before_last = split_points[-2]
+        last_span = point_distance(before_last, last)
+        if last_span > lock_stitch_mm + 0.001:
+            unit_x = (last[0] - before_last[0]) / last_span
+            unit_y = (last[1] - before_last[1]) / last_span
+            lock = (
+                last[0] - unit_x * lock_stitch_mm,
+                last[1] - unit_y * lock_stitch_mm,
+            )
+            split_points = [*split_points, lock, last]
+
+    return split_points
 
 
 def inventory_label(item: dict) -> str:
@@ -2712,6 +2787,11 @@ def write_segments_as_pes(
     color_order: list[int] | None = None,
     color_overrides: dict[int, str] | None = None,
     thread_label_overrides: dict[int, str] | None = None,
+    *,
+    max_stitch_mm: float = 7.0,
+    min_stitch_mm: float = 0.35,
+    lock_stitch_mm: float = 0.7,
+    connect_travel_mm: float = 2.0,
 ) -> list[dict]:
     selected_blocks = selected_blocks if selected_blocks is not None else {
         block["index"] for block in color_blocks
@@ -2746,61 +2826,104 @@ def write_segments_as_pes(
     previous_point: tuple[float, float] | None = None
     written_blocks: list[dict] = []
 
-    def write_segment(segment: dict) -> None:
-        nonlocal active_block, previous_point
-        block_index = segment["blockIndex"]
-        if block_index != active_block:
-            block = block_by_index[block_index]
-            color = color_overrides.get(block_index, block["color"]) if color_overrides else block["color"]
-            normalized_color = normalize_hex(color)
-            pattern.add_thread(make_thread(normalized_color))
-            label = ""
-            if thread_label_overrides:
-                label = thread_label_overrides.get(block_index, "")
-            label = label or block.get("label", "") or f"Thread {normalized_color}"
-            written_blocks.append(
-                {
-                    "color": normalized_color,
-                    "label": label,
-                    "source_block": block_index,
-                }
-            )
-            if active_block is not None:
-                pattern.color_change()
-            active_block = block_index
-
-        start = (segment["x1"], segment["y1"])
-        end = (segment["x2"], segment["y2"])
-        if (
-            previous_point is None
-            or abs(previous_point[0] - start[0]) > 0.001
-            or abs(previous_point[1] - start[1]) > 0.001
-        ):
-            pattern.add_stitch_absolute(
-                embroidery.JUMP,
-                int(round(start[0] * EMB_UNITS_PER_MM)),
-                int(round(start[1] * EMB_UNITS_PER_MM)),
-            )
-        pattern.add_stitch_absolute(
-            embroidery.STITCH,
-            int(round(end[0] * EMB_UNITS_PER_MM)),
-            int(round(end[1] * EMB_UNITS_PER_MM)),
+    def ensure_active_block(block_index: int) -> None:
+        nonlocal active_block
+        if block_index == active_block:
+            return
+        block = block_by_index[block_index]
+        color = color_overrides.get(block_index, block["color"]) if color_overrides else block["color"]
+        normalized_color = normalize_hex(color)
+        pattern.add_thread(make_thread(normalized_color))
+        label = ""
+        if thread_label_overrides:
+            label = thread_label_overrides.get(block_index, "")
+        label = label or block.get("label", "") or f"Thread {normalized_color}"
+        written_blocks.append(
+            {
+                "color": normalized_color,
+                "label": label,
+                "source_block": block_index,
+            }
         )
-        previous_point = end
+        if active_block is not None:
+            pattern.color_change()
+        active_block = block_index
+
+    def write_run(block_index: int, points: list[tuple[float, float]]) -> None:
+        nonlocal active_block, previous_point
+        clean_points = clean_run_points(
+            points,
+            min_stitch_mm=min_stitch_mm,
+            max_stitch_mm=max_stitch_mm,
+            lock_stitch_mm=lock_stitch_mm,
+        )
+        if len(clean_points) < 2:
+            return
+        same_block = active_block == block_index
+        ensure_active_block(block_index)
+        start = clean_points[0]
+        if previous_point is None or not points_match(previous_point, start):
+            travel = point_distance(previous_point, start) if previous_point is not None else math.inf
+            if same_block and previous_point is not None and travel <= connect_travel_mm:
+                for x, y in split_long_point_span(previous_point, start, max_stitch_mm):
+                    pattern.add_stitch_absolute(
+                        embroidery.STITCH,
+                        int(round(x * EMB_UNITS_PER_MM)),
+                        int(round(y * EMB_UNITS_PER_MM)),
+                    )
+            else:
+                pattern.add_stitch_absolute(
+                    embroidery.JUMP,
+                    int(round(start[0] * EMB_UNITS_PER_MM)),
+                    int(round(start[1] * EMB_UNITS_PER_MM)),
+                )
+        for x, y in clean_points[1:]:
+            pattern.add_stitch_absolute(
+                embroidery.STITCH,
+                int(round(x * EMB_UNITS_PER_MM)),
+                int(round(y * EMB_UNITS_PER_MM)),
+            )
+        previous_point = clean_points[-1]
+
+    def write_segment_sequence(sequence: list[dict]) -> None:
+        current_block: int | None = None
+        run_points: list[tuple[float, float]] = []
+
+        def flush() -> None:
+            nonlocal run_points
+            if current_block is not None and run_points:
+                write_run(current_block, run_points)
+            run_points = []
+
+        for segment in sequence:
+            block_index = segment["blockIndex"]
+            start = (segment["x1"], segment["y1"])
+            end = (segment["x2"], segment["y2"])
+            if current_block != block_index or not run_points or not points_match(run_points[-1], start):
+                flush()
+                current_block = block_index
+                run_points = [start, end]
+            else:
+                run_points.append(end)
+        flush()
 
     if preserve_sequence:
-        for segment in segments:
-            block_index = segment["blockIndex"]
-            if block_index not in selected_blocks or segment["kind"] != "stitch":
-                continue
-            write_segment(segment)
+        write_segment_sequence(
+            [
+                segment
+                for segment in segments
+                if segment["kind"] == "stitch" and segment["blockIndex"] in selected_blocks
+            ]
+        )
     else:
         for ordered_block in ordered_blocks:
-            for segment in segments:
-                block_index = segment["blockIndex"]
-                if block_index != ordered_block or segment["kind"] != "stitch":
-                    continue
-                write_segment(segment)
+            write_segment_sequence(
+                [
+                    segment
+                    for segment in segments
+                    if segment["kind"] == "stitch" and segment["blockIndex"] == ordered_block
+                ]
+            )
 
     if pattern.count_stitches() == 0:
         raise ValueError("No selected stitches to write.")
@@ -2883,6 +3006,7 @@ def write_filtered_pes(
         color_order,
         color_overrides,
         thread_label_overrides,
+        max_stitch_mm=max_stitch_mm,
     )
     thread_metadata_path(output_file).write_text(
         json.dumps({"blocks": written_blocks}, indent=2),
@@ -2924,19 +3048,32 @@ def write_svg_as_pes(
             pdf_dpi=pdf_dpi,
         )
         return
-    runs = extract_runs(
+    segments, _, color_blocks, _ = collect_svg_segments(
         input_file,
         sample_step_mm=sample_step_mm,
         fill_spacing_mm=fill_spacing_mm,
         max_stitch_mm=max_stitch_mm,
-    )
-    runs = transform_runs(
-        runs,
         fit_width_mm=fit_width_mm,
         fit_height_mm=fit_height_mm,
         center=center,
     )
-    write_embroidery(runs, output_file)
+    write_segments_as_pes(
+        segments,
+        color_blocks,
+        output_file,
+        max_stitch_mm=max_stitch_mm,
+    )
+
+
+def write_image_as_pes(source_file: Path, output_file: Path, **settings) -> None:
+    max_stitch_mm = float(settings.get("max_stitch_mm", 3.0))
+    segments, _, color_blocks, _ = image_to_segments(source_file, **settings)
+    write_segments_as_pes(
+        segments,
+        color_blocks,
+        output_file,
+        max_stitch_mm=max_stitch_mm,
+    )
 
 
 def main() -> int:

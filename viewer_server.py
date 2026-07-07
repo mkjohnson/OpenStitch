@@ -277,7 +277,7 @@ class ViewerHandler(SimpleHTTPRequestHandler):
             except Exception:
                 self.send_app_error("Fit width must be greater than zero")
                 return
-        fill_spacing = 0.15
+        fill_spacing = 0.35
         if "fill_spacing_mm" in form and form["fill_spacing_mm"].value:
             try:
                 fill_spacing = positive_float(form["fill_spacing_mm"].value)
