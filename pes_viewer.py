@@ -9,7 +9,7 @@ from pathlib import Path
 import pyembroidery as embroidery
 
 from image_digitizer import image_to_segments, is_raster_source, svg_needs_rasterization
-from svg2brother import extract_runs, transform_runs, positive_float, make_thread
+from svg2brother import extract_runs_for_final_size, positive_float, make_thread
 from thread_catalog import load_thread_catalog
 from thread_inventory import closest_inventory_match, load_inventory, normalize_hex, rgb_distance
 
@@ -2486,14 +2486,11 @@ def collect_svg_segments(
     fit_height_mm: float | None,
     center: bool,
 ) -> tuple[list[dict], list[dict], list[dict], dict]:
-    runs = extract_runs(
+    runs = extract_runs_for_final_size(
         svg_file,
         sample_step_mm=sample_step_mm,
         fill_spacing_mm=fill_spacing_mm,
         max_stitch_mm=max_stitch_mm,
-    )
-    runs = transform_runs(
-        runs,
         fit_width_mm=fit_width_mm,
         fit_height_mm=fit_height_mm,
         center=center,

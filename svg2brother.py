@@ -245,6 +245,48 @@ def transform_runs(
     return transformed
 
 
+def extract_runs_for_final_size(
+    svg_file: Path,
+    *,
+    sample_step_mm: float,
+    fill_spacing_mm: float,
+    max_stitch_mm: float,
+    fit_width_mm: float | None,
+    fit_height_mm: float | None,
+    center: bool,
+) -> list[StitchRun]:
+    runs = extract_runs(
+        svg_file,
+        sample_step_mm=sample_step_mm,
+        fill_spacing_mm=fill_spacing_mm,
+        max_stitch_mm=max_stitch_mm,
+    )
+    min_x, min_y, max_x, max_y = bounds(runs)
+    width = max(max_x - min_x, 0.001)
+    height = max(max_y - min_y, 0.001)
+    scale = 1.0
+    if fit_width_mm and fit_height_mm:
+        scale = min(fit_width_mm / width, fit_height_mm / height)
+    elif fit_width_mm:
+        scale = fit_width_mm / width
+    elif fit_height_mm:
+        scale = fit_height_mm / height
+
+    if abs(scale - 1.0) > 0.001:
+        runs = extract_runs(
+            svg_file,
+            sample_step_mm=max(sample_step_mm / scale, 0.01),
+            fill_spacing_mm=max(fill_spacing_mm / scale, 0.01),
+            max_stitch_mm=max(max_stitch_mm / scale, 0.1),
+        )
+    return transform_runs(
+        runs,
+        fit_width_mm=fit_width_mm,
+        fit_height_mm=fit_height_mm,
+        center=center,
+    )
+
+
 def make_thread(hex_color: str) -> EmbThread:
     thread = EmbThread()
     thread.set_hex_color(hex_color)
@@ -349,14 +391,11 @@ def main() -> int:
     output = args.output or input_file.with_suffix(f".{args.format.lower()}")
     if output.suffix == "":
         output = output.with_suffix(f".{args.format.lower()}")
-    runs = extract_runs(
+    runs = extract_runs_for_final_size(
         input_file,
         sample_step_mm=args.sample_step_mm,
         fill_spacing_mm=args.fill_spacing_mm,
         max_stitch_mm=args.max_stitch_mm,
-    )
-    runs = transform_runs(
-        runs,
         fit_width_mm=args.fit_width_mm,
         fit_height_mm=args.fit_height_mm,
         center=not args.no_center,
