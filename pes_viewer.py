@@ -768,11 +768,15 @@ def render_html(
       grid-template-columns: var(--sidebar-width) 1fr;
     }}
     aside {{
-      position: relative;
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      max-height: 100vh;
       background: #ffffff;
       border-right: 1px solid #d9ded6;
       padding: 24px;
-      overflow: auto;
+      overflow-y: auto;
+      overscroll-behavior: contain;
     }}
     .sidebar-resizer {{
       position: fixed;
@@ -1484,6 +1488,9 @@ def render_html(
       }}
       aside {{
         position: static;
+        height: auto;
+        max-height: none;
+        overflow: visible;
         border-right: 0;
         border-bottom: 1px solid #d9ded6;
       }}
