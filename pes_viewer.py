@@ -265,6 +265,20 @@ def inventory_label(item: dict) -> str:
     return label or item["color"]
 
 
+def catalog_label(item: dict) -> str:
+    return " ".join(
+        part
+        for part in [item.get("brand", ""), item.get("number", ""), item.get("name", "")]
+        if part
+    ).strip() or item["color"]
+
+
+def closest_thread_match(color: str, threads: list[dict]) -> dict | None:
+    if not threads:
+        return None
+    return min(threads, key=lambda item: rgb_distance(color, item["color"]))
+
+
 def render_inventory_options() -> str:
     options = ['<option value="">Known thread colors</option>']
     inventory = load_inventory()
@@ -304,7 +318,8 @@ def group_color_blocks_by_inventory(
     match_distance: float = 64.0,
 ) -> tuple[list[dict], list[dict], list[dict], dict]:
     inventory = load_inventory()
-    if not inventory or match_distance <= 0:
+    catalog = load_thread_catalog()
+    if match_distance <= 0:
         return segments, commands, color_blocks, counts
 
     block_map: dict[int, int] = {}
@@ -317,6 +332,12 @@ def group_color_blocks_by_inventory(
             key = ("inventory", match["id"])
             display_color = match["color"]
             label = f"Inventory {inventory_label(match)}"
+        elif catalog:
+            catalog_match = closest_thread_match(color, catalog)
+            assert catalog_match is not None
+            key = ("floriani", catalog_match["number"])
+            display_color = catalog_match["color"]
+            label = catalog_label(catalog_match)
         else:
             key = ("design", str(block["index"]))
             display_color = color
@@ -354,6 +375,7 @@ def group_color_blocks_by_inventory(
 
 def render_thread_plan(color_blocks: list[dict], usage_by_block: dict[int, float]) -> str:
     inventory = load_inventory()
+    catalog = load_thread_catalog()
     rows: list[str] = []
     needed: list[str] = []
     total_meters = 0.0
@@ -362,6 +384,15 @@ def render_thread_plan(color_blocks: list[dict], usage_by_block: dict[int, float
         meters = usage_by_block.get(block["index"], 0.0)
         total_meters += meters
         match = closest_inventory_match(color, inventory)
+        catalog_match = closest_thread_match(color, catalog)
+        catalog_detail = "No Floriani catalog colors loaded."
+        if catalog_match is not None:
+            catalog_distance = rgb_distance(color, catalog_match["color"])
+            catalog_detail = (
+                f'<span class="swatch" style="background:{html.escape(catalog_match["color"])}"></span>'
+                f'{html.escape(catalog_label(catalog_match))} '
+                f'({html.escape(catalog_match["color"])}, match {catalog_distance:.0f})'
+            )
         if match is None:
             status = "Need to buy"
             detail = "No inventory colors saved yet."
@@ -378,12 +409,15 @@ def render_thread_plan(color_blocks: list[dict], usage_by_block: dict[int, float
             )
             if not close_enough:
                 needed.append(color)
+                if catalog_match is not None:
+                    detail += f"<br>Buy closest Floriani: {catalog_detail}"
         rows.append(
             '<tr>'
             f'<td><span class="swatch" style="background:{html.escape(color)}"></span>{html.escape(color)}</td>'
             f'<td>{format_usage(meters)}</td>'
             f'<td><span class="thread-status {status_class}">{status}</span></td>'
             f'<td>{detail}</td>'
+            f'<td>{catalog_detail}</td>'
             '</tr>'
         )
 
@@ -395,7 +429,7 @@ def render_thread_plan(color_blocks: list[dict], usage_by_block: dict[int, float
         '<section class="thread-plan">'
         '<h2>Thread Planning</h2>'
         f'<p>{html.escape(summary)}</p>'
-        '<table><thead><tr><th>Design color</th><th>Use</th><th>Status</th><th>Closest inventory match</th></tr></thead>'
+        '<table><thead><tr><th>Design color</th><th>Use</th><th>Status</th><th>Closest inventory match</th><th>Closest Floriani</th></tr></thead>'
         f'<tbody>{"".join(rows)}</tbody></table>'
         '<a class="inventory-link" href="/inventory">Edit Thread Inventory</a>'
         '</section>'

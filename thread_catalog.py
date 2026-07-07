@@ -248,7 +248,7 @@ FLORIANI_THREADS = [
     {"brand": "Floriani", "number": 'PF 661', "name": 'Light Violet', "color": '#9a7fb9'},
     {"brand": "Floriani", "number": 'PF 676', "name": 'Royal Purple', "color": '#541c49'},
     {"brand": "Floriani", "number": 'PF 675', "name": 'Luxury', "color": '#772271'},
-    {"brand": "Floriani", "number": 'PF 674', "name": 'Russian Violet', "color": '#8633102'},
+    {"brand": "Floriani", "number": 'PF 674', "name": 'Russian Violet', "color": '#7a68ae'},
     {"brand": "Floriani", "number": 'PF 673', "name": 'Lavender', "color": '#934e90'},
     {"brand": "Floriani", "number": 'PF 672', "name": 'Amethyst', "color": '#cebad8'},
     {"brand": "Floriani", "number": 'PF 755', "name": 'Burnt Orange', "color": '#e2501f'},
