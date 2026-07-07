@@ -5,6 +5,7 @@ import cgi
 import html
 import json
 import re
+import sys
 import uuid
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -15,9 +16,11 @@ from pes_viewer import build_viewer_html, positive_float, write_filtered_pes, wr
 from thread_inventory import add_inventory_item, delete_inventory_item, load_inventory, normalize_hex
 
 
-OUTPUT_DIR = Path("viewer_output")
-TEMPLATE_DIR = Path("templates")
-STATIC_DIR = Path("static")
+RESOURCE_DIR = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+DATA_DIR = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path.cwd()
+OUTPUT_DIR = DATA_DIR / "viewer_output"
+TEMPLATE_DIR = RESOURCE_DIR / "templates"
+STATIC_DIR = RESOURCE_DIR / "static"
 MIN_BROTHER_STITCH_MM = 0.5
 MAX_BROTHER_EMBROIDERY_STITCH_MM = 7.0
 

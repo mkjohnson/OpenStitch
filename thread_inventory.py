@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import json
 import math
+import sys
 import uuid
 from pathlib import Path
 
 
-INVENTORY_FILE = Path("thread_inventory.json")
+DATA_DIR = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path.cwd()
+INVENTORY_FILE = DATA_DIR / "thread_inventory.json"
 
 
 def normalize_hex(value: str) -> str:
