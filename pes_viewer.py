@@ -260,6 +260,21 @@ def format_usage(meters: float) -> str:
     return f"{meters:.2f} m"
 
 
+def estimate_stitch_time(counts: dict, color_blocks: list[dict]) -> str:
+    stitch_seconds = counts["needle_points"] / 600.0 * 60.0
+    jump_seconds = counts["jumps"] * 0.25
+    trim_seconds = counts["trims"] * 2.0
+    color_seconds = max(0, len(color_blocks) - 1) * 25.0
+    total_seconds = max(1, int(round(stitch_seconds + jump_seconds + trim_seconds + color_seconds)))
+    minutes, seconds = divmod(total_seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours} hr {minutes} min"
+    if minutes:
+        return f"{minutes} min {seconds} sec"
+    return f"{seconds} sec"
+
+
 def inventory_label(item: dict) -> str:
     label = " ".join(part for part in [item.get("brand", ""), item.get("name", "")] if part).strip()
     return label or item["color"]
@@ -624,6 +639,7 @@ def render_html(
         "Color blocks": len(color_blocks),
         "Threads": len(pattern.threadlist) if pattern is not None else len(color_blocks),
         "Max stitch length": f"{max_stitch_mm:.1f} mm",
+        "Estimated stitch time": estimate_stitch_time(counts, color_blocks),
     }
     max_step = counts["needle_points"]
     stats_html = "\n          ".join(
@@ -928,6 +944,68 @@ def render_html(
       display: grid;
       gap: 10px;
       margin-top: 20px;
+    }}
+    .view-legend {{
+      display: grid;
+      gap: 8px;
+      margin-top: 18px;
+      padding: 12px;
+      border: 1px solid #d9ded6;
+      border-radius: 8px;
+      background: #fbfcfa;
+      font-size: 13px;
+    }}
+    .view-legend h2 {{
+      margin: 0;
+      font-size: 13px;
+      color: #52605a;
+      text-transform: uppercase;
+      letter-spacing: 0;
+    }}
+    .legend-item {{
+      display: grid;
+      grid-template-columns: 34px 1fr;
+      gap: 8px;
+      align-items: center;
+      color: #29332f;
+    }}
+    .legend-symbol {{
+      position: relative;
+      height: 18px;
+      border-radius: 4px;
+    }}
+    .legend-symbol.stitch-line::before,
+    .legend-symbol.jump-line::before {{
+      content: "";
+      position: absolute;
+      left: 2px;
+      right: 2px;
+      top: 8px;
+      border-top: 3px solid #111827;
+    }}
+    .legend-symbol.jump-line::before {{
+      border-top: 2px dashed #66736f;
+    }}
+    .legend-symbol.needle-dot::before,
+    .legend-symbol.trim-dot::before,
+    .legend-symbol.change-dot::before {{
+      content: "";
+      position: absolute;
+      left: 10px;
+      top: 3px;
+      width: 12px;
+      height: 12px;
+      border-radius: 999px;
+      background: #111827;
+      border: 1px solid #111827;
+    }}
+    .legend-symbol.trim-dot::before {{
+      background: #f97316;
+      border-color: #7c2d12;
+    }}
+    .legend-symbol.change-dot::before {{
+      background: #2563eb;
+      border-color: #172554;
     }}
     .playback {{
       display: grid;
@@ -1327,6 +1405,20 @@ def render_html(
       min-height: calc(100vh - 38px);
       display: block;
     }}
+    .canvas-tooltip {{
+      position: fixed;
+      z-index: 50;
+      max-width: 260px;
+      padding: 7px 9px;
+      border: 1px solid #c9d2cd;
+      border-radius: 6px;
+      background: #ffffff;
+      color: #172026;
+      box-shadow: 0 8px 22px rgba(23, 32, 38, 0.16);
+      font-size: 12px;
+      line-height: 1.35;
+      pointer-events: none;
+    }}
     body.thumbnail-mode {{
       display: block;
       min-height: 100vh;
@@ -1456,6 +1548,24 @@ def render_html(
       <label><input id="toggle-points" type="checkbox" checked> Show needle points</label>
       <label><input id="toggle-markers" type="checkbox" checked> Show trims and color changes</label>
     </section>
+    <section class="view-legend" aria-label="Preview symbol legend">
+      <h2>Legend</h2>
+      <div class="legend-item" title="Stitches are the thread paths sewn into the fabric.">
+        <span class="legend-symbol stitch-line"></span><span>Stitches</span>
+      </div>
+      <div class="legend-item" title="Jumps are travel moves where the needle moves without forming visible thread.">
+        <span class="legend-symbol jump-line"></span><span>Jumps</span>
+      </div>
+      <div class="legend-item" title="Needle points show individual stitch endpoints when enabled.">
+        <span class="legend-symbol needle-dot"></span><span>Needle points</span>
+      </div>
+      <div class="legend-item" title="Orange dots mark trim commands.">
+        <span class="legend-symbol trim-dot"></span><span>Trims</span>
+      </div>
+      <div class="legend-item" title="Blue dots mark color-change commands.">
+        <span class="legend-symbol change-dot"></span><span>Color changes</span>
+      </div>
+    </section>
     <section class="toolpath-actions" aria-label="Toolpath zoom controls">
       <button id="zoom-out" type="button">Zoom -</button>
       <button id="zoom-reset" type="button">Reset</button>
@@ -1469,6 +1579,7 @@ def render_html(
       <canvas id="toolpath" data-initial-viewbox="{embedded_view_box}" aria-label="Embroidery stitch preview"></canvas>
     </div>
   </main>
+  <div id="canvas-tooltip" class="canvas-tooltip hidden" role="tooltip"></div>
   {export_open}
     <section class="thread-floater" aria-label="Thread color controls">
       <div class="thread-floater-title">
@@ -1502,6 +1613,7 @@ def render_html(
     const zoomOut = document.getElementById("zoom-out");
     const zoomReset = document.getElementById("zoom-reset");
     const zoomReadout = document.getElementById("zoom-readout");
+    const canvasTooltip = document.getElementById("canvas-tooltip");
     const viewerMenuToggle = document.getElementById("viewer-menu-toggle");
     const sidebarResizer = document.getElementById("sidebar-resizer");
     const threadFloaterToggle = document.getElementById("thread-floater-toggle");
@@ -1598,6 +1710,96 @@ def render_html(
 
     function toCanvasY(y) {{
       return ((y - viewBoxState.y) / viewBoxState.height) * toolpath.height;
+    }}
+
+    function formatPoint(x, y) {{
+      return `${{x.toFixed(1)}} mm, ${{y.toFixed(1)}} mm`;
+    }}
+
+    function segmentKindName(kind) {{
+      if (kind === 1) return "Stitch";
+      if (kind === 2) return "Travel after trim";
+      if (kind === 3) return "Travel after color change";
+      return "Jump";
+    }}
+
+    function markerKindName(kind) {{
+      return kind === "color_change" ? "Color change" : "Trim";
+    }}
+
+    function distanceToSegment(px, py, x1, y1, x2, y2) {{
+      const dx = x2 - x1;
+      const dy = y2 - y1;
+      if (dx === 0 && dy === 0) return Math.hypot(px - x1, py - y1);
+      const t = Math.max(0, Math.min(1, ((px - x1) * dx + (py - y1) * dy) / (dx * dx + dy * dy)));
+      return Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy));
+    }}
+
+    function describeCanvasHit(point) {{
+      const px = toCanvasX(point.x);
+      const py = toCanvasY(point.y);
+      const zoom = initialViewBox.width / viewBoxState.width;
+      const markerRadius = Math.max(8, deviceScale * 5);
+      if (showMarkers) {{
+        for (const marker of markerData) {{
+          if (marker[3] > currentStep) continue;
+          const distance = Math.hypot(px - toCanvasX(marker[0]), py - toCanvasY(marker[1]));
+          if (distance <= markerRadius) {{
+            return `${{markerKindName(marker[2])}}<br>Step ${{marker[3]}}<br>${{formatPoint(marker[0], marker[1])}}`;
+          }}
+        }}
+      }}
+      if (showPoints && (currentStep <= 20000 || zoom >= 2)) {{
+        let nearestPoint = null;
+        let nearestDistance = Number.POSITIVE_INFINITY;
+        for (const segment of segments) {{
+          if (segment[4] !== 1 || segment[6] > currentStep || !selectedBlocks.has(segment[5])) continue;
+          const distance = Math.hypot(px - toCanvasX(segment[2]), py - toCanvasY(segment[3]));
+          if (distance < nearestDistance) {{
+            nearestDistance = distance;
+            nearestPoint = segment;
+          }}
+        }}
+        if (nearestPoint && nearestDistance <= Math.max(8, deviceScale * 5)) {{
+          return `Needle point<br>Step ${{nearestPoint[6]}}<br>Thread block ${{nearestPoint[5] + 1}}<br>${{formatPoint(nearestPoint[2], nearestPoint[3])}}`;
+        }}
+      }}
+      let nearestSegment = null;
+      let nearestDistance = Number.POSITIVE_INFINITY;
+      for (const segment of segments) {{
+        if (segment[6] > currentStep || !selectedBlocks.has(segment[5])) continue;
+        const isStitch = segment[4] === 1;
+        if (!isStitch && !showJumps) continue;
+        const distance = distanceToSegment(
+          px,
+          py,
+          toCanvasX(segment[0]),
+          toCanvasY(segment[1]),
+          toCanvasX(segment[2]),
+          toCanvasY(segment[3])
+        );
+        if (distance < nearestDistance) {{
+          nearestDistance = distance;
+          nearestSegment = segment;
+        }}
+      }}
+      if (nearestSegment && nearestDistance <= Math.max(7, deviceScale * 4)) {{
+        return `${{segmentKindName(nearestSegment[4])}}<br>Step ${{nearestSegment[6]}}<br>Thread block ${{nearestSegment[5] + 1}}`;
+      }}
+      return "";
+    }}
+
+    function showCanvasTooltip(event) {{
+      if (!canvasTooltip) return;
+      const text = describeCanvasHit(svgPointFromEvent(event));
+      if (!text) {{
+        canvasTooltip.classList.add("hidden");
+        return;
+      }}
+      canvasTooltip.innerHTML = text;
+      canvasTooltip.style.left = `${{event.clientX + 14}}px`;
+      canvasTooltip.style.top = `${{event.clientY + 14}}px`;
+      canvasTooltip.classList.remove("hidden");
     }}
 
     function renderScene() {{
@@ -2048,10 +2250,17 @@ def render_html(
         height: dragStart.viewBox.height,
       }});
     }});
+    stage.addEventListener("pointermove", (event) => {{
+      if (!dragStart) showCanvasTooltip(event);
+    }});
+    stage.addEventListener("pointerleave", () => {{
+      if (canvasTooltip) canvasTooltip.classList.add("hidden");
+    }});
     function endDrag(event) {{
       if (!dragStart) return;
       dragStart = null;
       stage.classList.remove("dragging");
+      if (canvasTooltip) canvasTooltip.classList.add("hidden");
       if (stage.hasPointerCapture(event.pointerId)) {{
         stage.releasePointerCapture(event.pointerId);
       }}
