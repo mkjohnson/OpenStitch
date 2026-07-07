@@ -13,7 +13,9 @@ def convert_points_to_stitches(points: Iterable[tuple[int, int]]) -> list[tuple[
     commands: list[tuple[int, int, bool]] = []
     for index, point in enumerate(points):
         if len(point) != 2:
-            raise ValueError("Each point must contain exactly two coordinates")
+            raise ValueError(
+                f"Point at index {index} must contain exactly two coordinates: {point!r}"
+            )
         x, y = point
         if not isinstance(x, int) or not isinstance(y, int):
             raise TypeError("Point coordinates must be integers")

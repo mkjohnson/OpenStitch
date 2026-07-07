@@ -12,6 +12,10 @@ class TestConverter(unittest.TestCase):
         with self.assertRaises(TypeError):
             convert_points_to_stitches([(0, "2")])  # type: ignore[arg-type]
 
+    def test_rejects_invalid_point_shape_with_index(self):
+        with self.assertRaisesRegex(ValueError, r"index 1"):
+            convert_points_to_stitches([(0, 0), (1, 2, 3)])  # type: ignore[list-item]
+
 
 if __name__ == "__main__":
     unittest.main()
