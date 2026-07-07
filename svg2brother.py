@@ -111,14 +111,34 @@ def split_long_stitches(
     return result
 
 
+def rotate_point(
+    point: tuple[float, float],
+    angle_rad: float,
+    origin: tuple[float, float],
+) -> tuple[float, float]:
+    x, y = point
+    ox, oy = origin
+    dx = x - ox
+    dy = y - oy
+    cos_a = math.cos(angle_rad)
+    sin_a = math.sin(angle_rad)
+    return (ox + (dx * cos_a) - (dy * sin_a), oy + (dx * sin_a) + (dy * cos_a))
+
+
 def hatch_fill(
-    polygon: list[tuple[float, float]], spacing_mm: float, max_stitch_mm: float
+    polygon: list[tuple[float, float]],
+    spacing_mm: float,
+    max_stitch_mm: float,
+    fill_angle_deg: float = 0.0,
 ) -> list[list[tuple[float, float]]]:
-    return hatch_compound_fill([polygon], spacing_mm, max_stitch_mm)
+    return hatch_compound_fill([polygon], spacing_mm, max_stitch_mm, fill_angle_deg)
 
 
 def hatch_compound_fill(
-    polygons: Iterable[list[tuple[float, float]]], spacing_mm: float, max_stitch_mm: float
+    polygons: Iterable[list[tuple[float, float]]],
+    spacing_mm: float,
+    max_stitch_mm: float,
+    fill_angle_deg: float = 0.0,
 ) -> list[list[tuple[float, float]]]:
     closed_polygons: list[list[tuple[float, float]]] = []
     for polygon in polygons:
@@ -129,6 +149,18 @@ def hatch_compound_fill(
         closed_polygons.append(polygon)
     if not closed_polygons:
         return []
+
+    angle_rad = math.radians(fill_angle_deg)
+    if abs(angle_rad) > 1e-6:
+        xs = [x for polygon in closed_polygons for x, _ in polygon]
+        ys = [y for polygon in closed_polygons for _, y in polygon]
+        origin = ((min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2)
+        closed_polygons = [
+            [rotate_point(point, -angle_rad, origin) for point in polygon]
+            for polygon in closed_polygons
+        ]
+    else:
+        origin = (0.0, 0.0)
 
     min_y = min(y for polygon in closed_polygons for _, y in polygon)
     max_y = max(y for polygon in closed_polygons for _, y in polygon)
@@ -154,7 +186,10 @@ def hatch_compound_fill(
             run = [(left, y), (right, y)]
             if row_index % 2:
                 run.reverse()
-            rows.append(split_long_stitches(run, max_stitch_mm))
+            row = split_long_stitches(run, max_stitch_mm)
+            if abs(angle_rad) > 1e-6:
+                row = [rotate_point(point, angle_rad, origin) for point in row]
+            rows.append(row)
             row_index += 1
         y += max(spacing_mm, 0.1)
 
@@ -166,6 +201,7 @@ def extract_runs(
     sample_step_mm: float,
     fill_spacing_mm: float,
     max_stitch_mm: float,
+    fill_angle_deg: float = 0.0,
 ) -> list[StitchRun]:
     svg = SVG.parse(str(svg_file), reify=True)
     sample_step_px = sample_step_mm * SVG_PX_PER_MM
@@ -189,7 +225,12 @@ def extract_runs(
         subpaths_mm = [to_mm(subpath_px) for subpath_px in flatten_path(path, sample_step_px)]
         if filled:
             fill_polygons = [subpath_mm for subpath_mm in subpaths_mm if len(subpath_mm) >= 3]
-            for row in hatch_compound_fill(fill_polygons, fill_spacing_mm, max_stitch_mm):
+            for row in hatch_compound_fill(
+                fill_polygons,
+                fill_spacing_mm,
+                max_stitch_mm,
+                fill_angle_deg,
+            ):
                 runs.append(StitchRun(color=color, points_mm=row))
         else:
             for subpath_mm in subpaths_mm:
@@ -254,12 +295,14 @@ def extract_runs_for_final_size(
     fit_width_mm: float | None,
     fit_height_mm: float | None,
     center: bool,
+    fill_angle_deg: float = 0.0,
 ) -> list[StitchRun]:
     runs = extract_runs(
         svg_file,
         sample_step_mm=sample_step_mm,
         fill_spacing_mm=fill_spacing_mm,
         max_stitch_mm=max_stitch_mm,
+        fill_angle_deg=fill_angle_deg,
     )
     min_x, min_y, max_x, max_y = bounds(runs)
     width = max(max_x - min_x, 0.001)
@@ -278,6 +321,7 @@ def extract_runs_for_final_size(
             sample_step_mm=max(sample_step_mm / scale, 0.01),
             fill_spacing_mm=max(fill_spacing_mm / scale, 0.01),
             max_stitch_mm=max(max_stitch_mm / scale, 0.1),
+            fill_angle_deg=fill_angle_deg,
         )
     return transform_runs(
         runs,
@@ -373,6 +417,12 @@ def parse_args() -> argparse.Namespace:
         help="Maximum stitch length in millimeters; default: 3.0",
     )
     parser.add_argument(
+        "--fill-angle-deg",
+        type=float,
+        default=0.0,
+        help="Fill stitch angle in degrees for filled SVG shapes; default: 0",
+    )
+    parser.add_argument(
         "--no-center",
         action="store_true",
         help="Keep the design's top-left origin instead of centering it around the hoop origin",
@@ -396,6 +446,7 @@ def main() -> int:
         sample_step_mm=args.sample_step_mm,
         fill_spacing_mm=args.fill_spacing_mm,
         max_stitch_mm=args.max_stitch_mm,
+        fill_angle_deg=args.fill_angle_deg,
         fit_width_mm=args.fit_width_mm,
         fit_height_mm=args.fit_height_mm,
         center=not args.no_center,
