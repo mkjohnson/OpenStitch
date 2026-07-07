@@ -2792,7 +2792,6 @@ def write_segments_as_pes(
     max_stitch_mm: float = 7.0,
     min_stitch_mm: float = 0.35,
     lock_stitch_mm: float = 0.7,
-    connect_travel_mm: float = 2.0,
 ) -> list[dict]:
     selected_blocks = selected_blocks if selected_blocks is not None else {
         block["index"] for block in color_blocks
@@ -2860,24 +2859,14 @@ def write_segments_as_pes(
         )
         if len(clean_points) < 2:
             return
-        same_block = active_block == block_index
         ensure_active_block(block_index)
         start = clean_points[0]
         if previous_point is None or not points_match(previous_point, start):
-            travel = point_distance(previous_point, start) if previous_point is not None else math.inf
-            if same_block and previous_point is not None and travel <= connect_travel_mm:
-                for x, y in split_long_point_span(previous_point, start, max_stitch_mm):
-                    pattern.add_stitch_absolute(
-                        embroidery.STITCH,
-                        int(round(x * EMB_UNITS_PER_MM)),
-                        int(round(y * EMB_UNITS_PER_MM)),
-                    )
-            else:
-                pattern.add_stitch_absolute(
-                    embroidery.JUMP,
-                    int(round(start[0] * EMB_UNITS_PER_MM)),
-                    int(round(start[1] * EMB_UNITS_PER_MM)),
-                )
+            pattern.add_stitch_absolute(
+                embroidery.JUMP,
+                int(round(start[0] * EMB_UNITS_PER_MM)),
+                int(round(start[1] * EMB_UNITS_PER_MM)),
+            )
         for x, y in clean_points[1:]:
             pattern.add_stitch_absolute(
                 embroidery.STITCH,
