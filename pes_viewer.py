@@ -548,23 +548,56 @@ def render_html(
       font-family: Inter, Segoe UI, Arial, sans-serif;
       color: #172026;
       background: #f7f8f5;
+      --sidebar-width: 340px;
     }}
     * {{ box-sizing: border-box; }}
     body {{
       margin: 0;
       min-height: 100vh;
       display: grid;
-      grid-template-columns: minmax(280px, 340px) 1fr;
+      grid-template-columns: var(--sidebar-width) 1fr;
     }}
     aside {{
+      position: relative;
       background: #ffffff;
       border-right: 1px solid #d9ded6;
       padding: 24px;
       overflow: auto;
     }}
+    .sidebar-resizer {{
+      position: fixed;
+      z-index: 16;
+      top: 0;
+      bottom: 0;
+      left: calc(var(--sidebar-width) - 4px);
+      width: 8px;
+      border: 0;
+      border-radius: 0;
+      padding: 0;
+      background: transparent;
+      cursor: col-resize;
+    }}
+    .sidebar-resizer::after {{
+      content: "";
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      left: 3px;
+      width: 2px;
+      background: transparent;
+      transition: background 120ms ease;
+    }}
+    .sidebar-resizer:hover::after,
+    body.resizing-sidebar .sidebar-resizer::after {{
+      background: #2f6f73;
+    }}
+    body.resizing-sidebar {{
+      cursor: col-resize;
+      user-select: none;
+    }}
     main {{
       min-width: 0;
-      padding: 18px;
+      padding: 18px 382px 18px 18px;
       display: flex;
       align-items: stretch;
     }}
@@ -727,6 +760,30 @@ def render_html(
     .color-export {{
       display: grid;
       gap: 12px;
+    }}
+    .thread-floater {{
+      position: fixed;
+      z-index: 18;
+      top: 12px;
+      right: 12px;
+      bottom: 12px;
+      width: min(354px, calc(100vw - 24px));
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr) auto;
+      gap: 12px;
+      padding: 16px;
+      border: 1px solid #d9ded6;
+      border-radius: 8px;
+      background: #ffffff;
+      box-shadow: 0 12px 32px rgba(23, 32, 38, 0.16);
+      overflow: hidden;
+    }}
+    .thread-floater h2 {{
+      margin: 0;
+    }}
+    .thread-floater ul {{
+      overflow: auto;
+      padding-right: 2px;
     }}
     .export-button {{
       margin-top: 4px;
@@ -955,11 +1012,26 @@ def render_html(
         grid-template-columns: 1fr;
       }}
       aside {{
+        position: static;
         border-right: 0;
         border-bottom: 1px solid #d9ded6;
       }}
+      .sidebar-resizer {{
+        display: none;
+      }}
       main {{
+        padding: 18px;
         min-height: 62vh;
+      }}
+      .thread-floater {{
+        position: static;
+        width: auto;
+        max-height: none;
+        margin: 0 18px 18px;
+        overflow: visible;
+      }}
+      .thread-floater ul {{
+        overflow: visible;
       }}
       .stage, canvas {{
         min-height: 62vh;
@@ -967,7 +1039,7 @@ def render_html(
     }}
   </style>
 </head>
-<body data-stats="{embedded_stats}">
+<body class="has-thread-floater" data-stats="{embedded_stats}">
   <div class="viewer-menu">
     <button id="viewer-menu-toggle" class="viewer-menu-button" type="button" aria-label="Open menu">&#9776;</button>
     <nav class="viewer-menu-panel" aria-label="Application menu">
@@ -1009,19 +1081,22 @@ def render_html(
       <button id="zoom-in" type="button">Zoom +</button>
     </section>
     <p id="zoom-readout" class="zoom-readout">Zoom 100%</p>
-    {export_open}
-    <h2>Threads</h2>
-    <ul>
-      {legend}
-    </ul>
-    {export_button}
-    {export_close}
   </aside>
+  <button id="sidebar-resizer" class="sidebar-resizer" type="button" aria-label="Resize left panel"></button>
   <main>
     <div id="stage" class="stage">
       <canvas id="toolpath" data-initial-viewbox="{embedded_view_box}" aria-label="Embroidery stitch preview"></canvas>
     </div>
   </main>
+  {export_open}
+    <section class="thread-floater" aria-label="Thread color controls">
+      <h2>Threads</h2>
+      <ul>
+        {legend}
+      </ul>
+      {export_button}
+    </section>
+  {export_close}
   <script id="segment-data" type="application/json">{embedded_segments}</script>
   <script id="marker-data" type="application/json">{embedded_markers}</script>
   <script id="palette-data" type="application/json">{embedded_palette}</script>
@@ -1042,6 +1117,7 @@ def render_html(
     const zoomReset = document.getElementById("zoom-reset");
     const zoomReadout = document.getElementById("zoom-readout");
     const viewerMenuToggle = document.getElementById("viewer-menu-toggle");
+    const sidebarResizer = document.getElementById("sidebar-resizer");
     const ctx = toolpath.getContext("2d");
     const segments = JSON.parse(document.getElementById("segment-data").textContent);
     const markerData = JSON.parse(document.getElementById("marker-data").textContent);
@@ -1066,6 +1142,23 @@ def render_html(
     let showPoints = true;
     let showMarkers = true;
     let deviceScale = 1;
+    let sidebarDrag = null;
+
+    function setSidebarWidth(width) {{
+      const clamped = Math.max(260, Math.min(560, Math.round(width)));
+      document.documentElement.style.setProperty("--sidebar-width", `${{clamped}}px`);
+      try {{
+        localStorage.setItem("embroideryViewerSidebarWidth", String(clamped));
+      }} catch (error) {{}}
+      resizeCanvas();
+    }}
+
+    try {{
+      const savedSidebarWidth = Number(localStorage.getItem("embroideryViewerSidebarWidth"));
+      if (Number.isFinite(savedSidebarWidth) && savedSidebarWidth > 0) {{
+        document.documentElement.style.setProperty("--sidebar-width", `${{Math.max(260, Math.min(560, savedSidebarWidth))}}px`);
+      }}
+    }} catch (error) {{}}
 
     function resizeCanvas() {{
       const rect = toolpath.getBoundingClientRect();
@@ -1357,6 +1450,32 @@ def render_html(
     }}
     stage.addEventListener("pointerup", endDrag);
     stage.addEventListener("pointercancel", endDrag);
+    if (sidebarResizer) {{
+      sidebarResizer.addEventListener("pointerdown", (event) => {{
+        if (event.button !== 0) return;
+        sidebarDrag = {{
+          startX: event.clientX,
+          startWidth: Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--sidebar-width")) || 340,
+        }};
+        document.body.classList.add("resizing-sidebar");
+        sidebarResizer.setPointerCapture(event.pointerId);
+      }});
+      sidebarResizer.addEventListener("pointermove", (event) => {{
+        if (!sidebarDrag) return;
+        setSidebarWidth(sidebarDrag.startWidth + event.clientX - sidebarDrag.startX);
+      }});
+      function endSidebarResize(event) {{
+        if (!sidebarDrag) return;
+        sidebarDrag = null;
+        document.body.classList.remove("resizing-sidebar");
+        if (sidebarResizer.hasPointerCapture(event.pointerId)) {{
+          sidebarResizer.releasePointerCapture(event.pointerId);
+        }}
+        resizeCanvas();
+      }}
+      sidebarResizer.addEventListener("pointerup", endSidebarResize);
+      sidebarResizer.addEventListener("pointercancel", endSidebarResize);
+    }}
     jumps.addEventListener("change", () => {{
       showJumps = jumps.checked;
       renderScene();
