@@ -304,6 +304,10 @@ def points_match(a: tuple[float, float], b: tuple[float, float], tolerance: floa
     return abs(a[0] - b[0]) <= tolerance and abs(a[1] - b[1]) <= tolerance
 
 
+def to_embroidery_units(point: tuple[float, float]) -> tuple[int, int]:
+    return int(round(point[0] * EMB_UNITS_PER_MM)), int(round(point[1] * EMB_UNITS_PER_MM))
+
+
 def split_long_point_span(
     start: tuple[float, float],
     end: tuple[float, float],
@@ -355,6 +359,8 @@ def clean_run_points(
             first[1] + unit_y * lock_stitch_mm,
         )
         split_points = [first, lock, first, *split_points[1:]]
+    elif first_span >= min_stitch_mm:
+        split_points = [first, second, first, *split_points[1:]]
 
     if len(split_points) >= 2:
         last = split_points[-1]
@@ -368,6 +374,8 @@ def clean_run_points(
                 last[1] - unit_y * lock_stitch_mm,
             )
             split_points = [*split_points, lock, last]
+        elif last_span >= min_stitch_mm:
+            split_points = [*split_points, before_last, last]
 
     return split_points
 
@@ -2962,21 +2970,37 @@ def write_segments_as_pes(
         )
         if len(clean_points) < 2:
             return
+        rounded_points: list[tuple[int, int]] = []
+        for point in clean_points:
+            rounded = to_embroidery_units(point)
+            if not rounded_points or rounded_points[-1] != rounded:
+                rounded_points.append(rounded)
+        if len(rounded_points) < 2:
+            return
         ensure_active_block(block_index)
-        start = clean_points[0]
-        if previous_point is None or not points_match(previous_point, start):
-            pattern.add_stitch_absolute(
-                embroidery.JUMP,
-                int(round(start[0] * EMB_UNITS_PER_MM)),
-                int(round(start[1] * EMB_UNITS_PER_MM)),
-            )
-        for x, y in clean_points[1:]:
-            pattern.add_stitch_absolute(
-                embroidery.STITCH,
-                int(round(x * EMB_UNITS_PER_MM)),
-                int(round(y * EMB_UNITS_PER_MM)),
-            )
-        previous_point = clean_points[-1]
+        start_units = rounded_points[0]
+        if previous_point is None or to_embroidery_units(previous_point) != start_units:
+            if previous_point is None:
+                jump_points = [start_units]
+            else:
+                jump_points = [
+                    to_embroidery_units(point)
+                    for point in split_long_point_span(
+                        previous_point,
+                        (start_units[0] / EMB_UNITS_PER_MM, start_units[1] / EMB_UNITS_PER_MM),
+                        max_stitch_mm,
+                    )
+                ]
+            previous_jump: tuple[int, int] | None = None
+            for jump_x, jump_y in jump_points:
+                if previous_jump == (jump_x, jump_y):
+                    continue
+                pattern.add_stitch_absolute(embroidery.JUMP, jump_x, jump_y)
+                previous_jump = (jump_x, jump_y)
+        for x, y in rounded_points[1:]:
+            pattern.add_stitch_absolute(embroidery.STITCH, x, y)
+        last_x, last_y = rounded_points[-1]
+        previous_point = (last_x / EMB_UNITS_PER_MM, last_y / EMB_UNITS_PER_MM)
 
     def write_segment_sequence(sequence: list[dict]) -> None:
         current_block: int | None = None
