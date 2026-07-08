@@ -86,6 +86,7 @@ class StitchCanvas(QWidget):
         self.show_jumps = True
         self.show_points = True
         self.show_markers = True
+        self.visible_blocks: set[int] | None = None
         self._drag_start: QPoint | None = None
         self._drag_pan = QPointF(0, 0)
         self.setMinimumSize(560, 420)
@@ -102,8 +103,13 @@ class StitchCanvas(QWidget):
         self.bounds = bounds
         self.max_step = max((segment.get("step", 0) for segment in segments), default=0)
         self.current_step = self.max_step
+        self.visible_blocks = None
         self.zoom = 1.0
         self.pan = QPointF(0, 0)
+        self.update()
+
+    def set_visible_blocks(self, visible_blocks: set[int] | None) -> None:
+        self.visible_blocks = set(visible_blocks) if visible_blocks is not None else None
         self.update()
 
     def set_step(self, step: int) -> None:
@@ -193,6 +199,8 @@ class StitchCanvas(QWidget):
         for segment in self.segments:
             if segment.get("step", 0) > self.current_step:
                 continue
+            if self.visible_blocks is not None and segment["blockIndex"] not in self.visible_blocks:
+                continue
             kind = segment["kind"]
             if kind != "stitch" and not self.show_jumps:
                 continue
@@ -217,6 +225,8 @@ class StitchCanvas(QWidget):
     def _draw_markers(self, painter: QPainter) -> None:
         for command in self.commands:
             if command.get("step", 0) > self.current_step:
+                continue
+            if self.visible_blocks is not None and command.get("color") not in self.visible_blocks:
                 continue
             if command.get("command") not in {"trim", "color_change"}:
                 continue
@@ -272,10 +282,16 @@ class OpenStitchWindow(QMainWindow):
         OUTPUT_DIR.mkdir(exist_ok=True)
         self.state: DesignState | None = None
         self.thread_rows: list[ThreadRow] = []
+        self._loading_settings = False
         self.play_timer = QTimer(self)
         self.play_timer.timeout.connect(self.advance_playback)
+        self.refresh_timer = QTimer(self)
+        self.refresh_timer.setSingleShot(True)
+        self.refresh_timer.setInterval(350)
+        self.refresh_timer.timeout.connect(self.refresh_current_design)
         self.catalog = load_thread_catalog()
         self._build_ui()
+        self._connect_setting_refresh()
         self.refresh_library()
 
     def _build_ui(self) -> None:
@@ -371,6 +387,19 @@ class OpenStitchWindow(QMainWindow):
         layout.addStretch(1)
         return panel
 
+    def _connect_setting_refresh(self) -> None:
+        for widget in [
+            self.fit_width,
+            self.fill_spacing,
+            self.max_stitch,
+            self.fill_angle,
+            self.color_merge,
+        ]:
+            widget.valueChanged.connect(self.schedule_refresh)
+        self.max_colors.valueChanged.connect(self.schedule_refresh)
+        self.pdf_page.valueChanged.connect(self.schedule_refresh)
+        self.fill_mode.currentTextChanged.connect(self.schedule_refresh)
+
     def _library_tab(self) -> QWidget:
         panel = QWidget()
         layout = QVBoxLayout(panel)
@@ -449,6 +478,43 @@ class OpenStitchWindow(QMainWindow):
             pdf_page=self.pdf_page.value(),
         )
 
+    def apply_settings_to_controls(self, settings: dict) -> None:
+        self._loading_settings = True
+        try:
+            if settings.get("fit_width_mm") not in {"", None}:
+                self.fit_width.setValue(float(settings["fit_width_mm"]))
+            self.fill_spacing.setValue(float(settings.get("fill_spacing_mm", self.fill_spacing.value())))
+            self.max_stitch.setValue(float(settings.get("max_stitch_mm", self.max_stitch.value())))
+            mode = str(settings.get("fill_mode", self.fill_mode.currentText()))
+            index = self.fill_mode.findText(mode)
+            if index >= 0:
+                self.fill_mode.setCurrentIndex(index)
+            self.fill_angle.setValue(float(settings.get("fill_angle_deg", self.fill_angle.value())))
+            self.max_colors.setValue(int(settings.get("max_colors", self.max_colors.value())))
+            self.color_merge.setValue(float(settings.get("color_merge_distance", self.color_merge.value())))
+            self.pdf_page.setValue(int(settings.get("pdf_page", self.pdf_page.value())))
+        finally:
+            self._loading_settings = False
+
+    def schedule_refresh(self, *args) -> None:
+        if self._loading_settings or self.state is None:
+            return
+        self.stats_label.setText("Updating stitches...")
+        self.refresh_timer.start()
+
+    def refresh_current_design(self) -> None:
+        if self.state is None:
+            return
+        try:
+            self.convert_path(
+                self.state.working_source,
+                self.current_settings(),
+                reset_view=False,
+                write_outputs=False,
+            )
+        except Exception as error:
+            QMessageBox.critical(self, "OpenStitch", str(error))
+
     def open_design(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
             self,
@@ -465,6 +531,7 @@ class OpenStitchWindow(QMainWindow):
                 path, settings = self.unpack_project(path)
             else:
                 settings = self.current_settings()
+            self.apply_settings_to_controls(settings)
             self.convert_path(path, settings)
         except Exception as error:
             QMessageBox.critical(self, "OpenStitch", str(error))
@@ -479,7 +546,13 @@ class OpenStitchWindow(QMainWindow):
         source_path.write_bytes(source_data)
         return source_path, project.get("settings", self.current_settings())
 
-    def convert_path(self, source_path: Path, settings: dict) -> None:
+    def convert_path(
+        self,
+        source_path: Path,
+        settings: dict,
+        reset_view: bool = True,
+        write_outputs: bool = True,
+    ) -> None:
         OUTPUT_DIR.mkdir(exist_ok=True)
         working_source = source_path
         if source_path.parent.resolve() != OUTPUT_DIR.resolve():
@@ -489,21 +562,25 @@ class OpenStitchWindow(QMainWindow):
             shutil.copy2(source_path, working_source)
         segments, commands, blocks, counts = self.collect_design(working_source, settings)
         bounds = design_bounds(segments, commands)
-        if working_source.suffix.lower() == ".pes":
-            pes_path = working_source.with_name(f"{working_source.stem}_native_{uuid.uuid4().hex[:10]}.pes")
+        if write_outputs or self.state is None:
+            if working_source.suffix.lower() == ".pes":
+                pes_path = working_source.with_name(f"{working_source.stem}_native_{uuid.uuid4().hex[:10]}.pes")
+            else:
+                pes_path = working_source.with_suffix(".pes")
+            project_path = working_source.with_suffix(PROJECT_SUFFIX)
+            written = write_segments_as_pes(
+                segments,
+                blocks,
+                pes_path,
+                max_stitch_mm=float(settings["max_stitch_mm"]),
+            )
+            thread_metadata_path(pes_path).write_text(json.dumps({"blocks": written}, indent=2), encoding="utf-8")
+            summary = project_summary_text(working_source, settings, bounds, counts)
+            project_path.with_suffix(".summary.txt").write_text(summary, encoding="utf-8")
+            write_project_file(project_path, working_source, settings, summary)
         else:
-            pes_path = working_source.with_suffix(".pes")
-        project_path = working_source.with_suffix(PROJECT_SUFFIX)
-        written = write_segments_as_pes(
-            segments,
-            blocks,
-            pes_path,
-            max_stitch_mm=float(settings["max_stitch_mm"]),
-        )
-        thread_metadata_path(pes_path).write_text(json.dumps({"blocks": written}, indent=2), encoding="utf-8")
-        summary = project_summary_text(working_source, settings, bounds, counts)
-        project_path.with_suffix(".summary.txt").write_text(summary, encoding="utf-8")
-        write_project_file(project_path, working_source, settings, summary)
+            pes_path = self.state.pes_path
+            project_path = self.state.project_path
         self.state = DesignState(
             source_path=source_path,
             working_source=working_source,
@@ -516,7 +593,15 @@ class OpenStitchWindow(QMainWindow):
             counts=counts,
             bounds=bounds,
         )
-        self.canvas.set_design(segments, commands, bounds)
+        if reset_view:
+            self.canvas.set_design(segments, commands, bounds)
+        else:
+            zoom = self.canvas.zoom
+            pan = QPointF(self.canvas.pan)
+            self.canvas.set_design(segments, commands, bounds)
+            self.canvas.zoom = zoom
+            self.canvas.pan = pan
+            self.canvas.update()
         self.step_slider.setRange(0, counts.get("needle_points", 0))
         self.step_slider.setValue(counts.get("needle_points", 0))
         self.update_stats()
@@ -587,6 +672,7 @@ class OpenStitchWindow(QMainWindow):
             row = ThreadRow(block, self.thread_changed)
             self.thread_rows.append(row)
             self.thread_layout.insertWidget(self.thread_layout.count() - 1, row)
+        self.canvas.set_visible_blocks(self.selected_blocks())
         self.update_shopping_list()
 
     def thread_changed(self) -> None:
@@ -596,6 +682,7 @@ class OpenStitchWindow(QMainWindow):
         for segment in self.state.segments:
             if segment["blockIndex"] in block_colors:
                 segment["color"] = block_colors[segment["blockIndex"]]
+        self.canvas.set_visible_blocks(self.selected_blocks())
         self.canvas.update()
         self.update_shopping_list()
 
