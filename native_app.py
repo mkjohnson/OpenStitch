@@ -509,7 +509,7 @@ class OpenStitchWindow(QMainWindow):
         self._loading_settings = True
         try:
             self.fill_mode.setCurrentText("tatami")
-            self.fill_spacing.setValue(max(self.fill_spacing.value(), 0.45))
+            self.fill_spacing.setValue(max(self.fill_spacing.value(), 0.50))
         finally:
             self._loading_settings = False
         self.schedule_refresh()
@@ -677,7 +677,7 @@ class OpenStitchWindow(QMainWindow):
             and 0 < math.hypot(segment["x2"] - segment["x1"], segment["y2"] - segment["y1"]) < 0.3
         )
         quality_notes: list[str] = []
-        if command_density > 3.0:
+        if command_density > 2.4:
             quality_notes.append(
                 "High saturation risk. Try Apply Safer Density or increase fill spacing."
             )
