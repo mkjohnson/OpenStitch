@@ -14,6 +14,7 @@ if (-not (Test-Path ".venv")) {
     --clean `
     --noconfirm `
     --onefile `
+    --windowed `
     --name "OpenStitch" `
     --add-data "templates;templates" `
     --add-data "static;static" `

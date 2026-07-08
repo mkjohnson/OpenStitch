@@ -1,7 +1,7 @@
-# embdmaker
+# OpenStitch
 
 Convert SVG artwork and common image files into Brother-compatible embroidery
-files with an animated toolpath previewer.
+files with a native animated toolpath previewer.
 
 WARNING: This is a work in progress, USE AT YOUR OWN RISK! I cannot be held responsible for any damage you may cause to your machine!
 
@@ -33,26 +33,39 @@ python svg2brother.py design.svg -o design.pes --fill-spacing-mm 0.45 --max-stit
 python svg2brother.py design.svg -o design.dst --format dst
 ```
 
-## Application
+## Native Application
 
-Start the local application:
+Start the desktop application from source:
+
+```powershell
+python app_launcher.py
+```
+
+Or build a shareable Windows EXE:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\build_exe.ps1
+```
+
+The built app is written to `dist\OpenStitch.exe`.
+
+The app provides:
+
+- Import for SVG, PES, JPG, PNG, and PDF files.
+- Animated stitch preview with zoom, pan, playback, and stitch stepping.
+- PES save after conversion.
+- Project save/load using `.embdproj` files.
+- Color-block toggles and color edits before saving a filtered PES.
+- A library tab for recent generated PES and project files.
+- Thread usage estimates and Floriani shopping-list suggestions.
+
+The older browser-based app is still available for comparison:
 
 ```powershell
 python app.py
 ```
 
 Then open `http://127.0.0.1:8765/`.
-
-The app provides:
-
-- Import for SVG, PES, JPG, PNG, and PDF files.
-- Animated stitch preview with zoom, pan, playback, and stitch stepping.
-- PES download after conversion.
-- Color-block toggles and filtered PES recreation.
-- A hamburger menu for moving between Convert, Library, and saved previews.
-- A Library page with live preview, generated previews, and PES files.
-- A Thread Inventory page for saved thread colors, close-match suggestions, and
-  estimated thread usage by design color.
 
 ## PES Viewer CLI
 
@@ -78,7 +91,7 @@ To choose where the saved Brother file goes:
 python pes_viewer.py design.svg -o design.html --pes-output design.pes
 ```
 
-For the browser import workflow, start the local application:
+For the browser import workflow, start the local server:
 
 ```powershell
 python app.py
@@ -91,8 +104,9 @@ viewer and a downloadable Brother `.pes` file. For JPG, PNG, and PDF files, use
 it when near-identical shades become separate thread colors, or set it to `0` to
 preserve the quantized palette. Use `Fill mode`, `Fill angle`, and `Fill
 spacing` to control stitch density and direction. Tatami fill uses angled,
-staggered rows for a more embroidery-like solid fill; horizontal fill keeps the
-older straight scanline behavior.
+staggered rows for a more embroidery-like solid fill; crosshatch adds a second
+opposing pass for denser coverage; horizontal fill keeps the older straight
+scanline behavior.
 
 Open `Thread Inventory` to add thread colors you own, including brand, thread
 name or number, hex color, and quantity. New generated viewers estimate thread
@@ -121,7 +135,7 @@ out on very large designs, then shown again when you zoom in.
 
 ## Notes
 
-- Filled closed shapes are stitched with horizontal hatch rows.
+- Filled closed shapes are stitched with tatami, crosshatch, or horizontal hatch rows.
 - Open paths and stroked shapes are stitched as running stitches.
 - SVG colors are converted into thread color stops.
 - JPG, PNG, and PDF artwork is quantized into a limited color palette before
@@ -130,4 +144,4 @@ out on very large designs, then shown again when you zoom in.
 - PDF conversion uses the selected page, rasterized before stitching.
 - SVG coordinates are read using the standard 96 DPI SVG unit convention.
 - Complex digitizing details such as satin columns, underlay, pull compensation,
-  applique stops, and trim commands are outside this first version.
+  and applique stops are outside this first version.
