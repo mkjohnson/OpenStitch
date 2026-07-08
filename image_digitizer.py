@@ -332,30 +332,17 @@ def image_to_segments(
     origin_y = -height_mm / 2
     min_run_px = max(1, int(math.ceil(min_run_mm * px_per_mm)))
     fill_mode = fill_mode.lower().strip()
-    if fill_mode not in {"horizontal", "tatami"}:
+    if fill_mode not in {"horizontal", "tatami", "crosshatch"}:
         fill_mode = "tatami"
-    stitch_angle = fill_angle_deg if fill_mode == "tatami" else 0.0
-    working_image = palette_image
     background_fill_index = next(
         (index for index, color in enumerate(colors) if is_background_color(color, background_threshold)),
         0,
     )
-    if abs(stitch_angle) > 0.001:
-        working_image = palette_image.rotate(
-            stitch_angle,
-            resample=Image.Resampling.NEAREST,
-            expand=True,
-            fillcolor=background_fill_index,
-        )
-    pixels = working_image.load()
-    working_width, working_height = working_image.size
     source_cx = (image.width - 1) / 2
     source_cy = (image.height - 1) / 2
-    working_cx = (working_width - 1) / 2
-    working_cy = (working_height - 1) / 2
-    angle = math.radians(stitch_angle)
-    cos_angle = math.cos(angle)
-    sin_angle = math.sin(angle)
+    stitch_angles = [0.0] if fill_mode == "horizontal" else [fill_angle_deg]
+    if fill_mode == "crosshatch":
+        stitch_angles.append(-fill_angle_deg if abs(fill_angle_deg) > 0.001 else 90.0)
 
     segments: list[dict] = []
     commands: list[dict] = []
@@ -372,13 +359,21 @@ def image_to_segments(
     pending_travel: str | None = None
 
     color_counts: dict[int, int] = {}
-    for y in range(working_height):
-        for x in range(working_width):
-            index = pixels[x, y]
+    palette_pixels = palette_image.load()
+    for y in range(palette_image.height):
+        for x in range(palette_image.width):
+            index = palette_pixels[x, y]
             color_counts[index] = color_counts.get(index, 0) + 1
     color_order = sorted(color_counts, key=lambda index: color_counts[index], reverse=True)
 
-    def to_design_mm(col: float, row: float) -> tuple[float, float]:
+    def to_design_mm(
+        col: float,
+        row: float,
+        working_cx: float,
+        working_cy: float,
+        cos_angle: float,
+        sin_angle: float,
+    ) -> tuple[float, float]:
         rotated_x = col - working_cx
         rotated_y = row - working_cy
         source_x = rotated_x * cos_angle - rotated_y * sin_angle + source_cx
@@ -436,7 +431,7 @@ def image_to_segments(
         if span <= 0.001:
             return
         max_len = max(max_stitch_mm, 0.1)
-        phase = ((row_index % 3) / 3.0) * max_len if fill_mode == "tatami" else 0.0
+        phase = ((row_index % 3) / 3.0) * max_len if fill_mode in {"tatami", "crosshatch"} else 0.0
         distances = [0.0]
         first = max_len - phase
         if first < max_len * 0.35:
@@ -494,29 +489,46 @@ def image_to_segments(
             counts["color_changes"] += 1
             pending_travel = "travel_after_color_change"
 
-        for row in range(working_height):
-            ranges: list[tuple[int, int]] = []
-            start: int | None = None
-            for col in range(working_width):
-                if pixels[col, row] == palette_index:
-                    if start is None:
-                        start = col
-                elif start is not None:
-                    if col - start >= min_run_px:
-                        ranges.append((start, col - 1))
-                    start = None
-            if start is not None and working_width - start >= min_run_px:
-                ranges.append((start, working_width - 1))
+        for pass_index, stitch_angle in enumerate(stitch_angles):
+            working_image = palette_image
+            if abs(stitch_angle) > 0.001:
+                working_image = palette_image.rotate(
+                    stitch_angle,
+                    resample=Image.Resampling.NEAREST,
+                    expand=True,
+                    fillcolor=background_fill_index,
+                )
+            pixels = working_image.load()
+            working_width, working_height = working_image.size
+            working_cx = (working_width - 1) / 2
+            working_cy = (working_height - 1) / 2
+            angle = math.radians(stitch_angle)
+            cos_angle = math.cos(angle)
+            sin_angle = math.sin(angle)
 
-            if row % 2:
-                ranges.reverse()
-            for left, right in ranges:
-                x1, y1 = to_design_mm(left, row)
-                x2, y2 = to_design_mm(right, row)
+            for row in range(working_height):
+                ranges: list[tuple[int, int]] = []
+                start: int | None = None
+                for col in range(working_width):
+                    if pixels[col, row] == palette_index:
+                        if start is None:
+                            start = col
+                    elif start is not None:
+                        if col - start >= min_run_px:
+                            ranges.append((start, col - 1))
+                        start = None
+                if start is not None and working_width - start >= min_run_px:
+                    ranges.append((start, working_width - 1))
+
                 if row % 2:
-                    x1, x2 = x2, x1
-                    y1, y2 = y2, y1
-                append_run(block, x1, y1, x2, y2, row)
+                    ranges.reverse()
+                for left, right in ranges:
+                    x1, y1 = to_design_mm(left, row, working_cx, working_cy, cos_angle, sin_angle)
+                    x2, y2 = to_design_mm(right, row, working_cx, working_cy, cos_angle, sin_angle)
+                    if row % 2:
+                        x1, x2 = x2, x1
+                        y1, y2 = y2, y1
+                    append_run(block, x1, y1, x2, y2, row + pass_index)
 
     if not segments:
         raise ValueError("No stitchable image regions were found.")

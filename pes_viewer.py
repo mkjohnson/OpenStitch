@@ -2573,6 +2573,7 @@ def collect_svg_segments(
     fill_spacing_mm: float,
     max_stitch_mm: float,
     fill_angle_deg: float,
+    fill_mode: str,
     fit_width_mm: float | None,
     fit_height_mm: float | None,
     center: bool,
@@ -2583,6 +2584,7 @@ def collect_svg_segments(
         fill_spacing_mm=fill_spacing_mm,
         max_stitch_mm=max_stitch_mm,
         fill_angle_deg=fill_angle_deg,
+        fill_mode=fill_mode,
         fit_width_mm=fit_width_mm,
         fit_height_mm=fit_height_mm,
         center=center,
@@ -2742,9 +2744,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--fill-mode",
-        choices=("tatami", "horizontal"),
+        choices=("tatami", "horizontal", "crosshatch"),
         default="tatami",
-        help="For image/PDF input, fill style; default: tatami",
+        help="For SVG/image/PDF input, fill style; default: tatami",
     )
     parser.add_argument(
         "--fill-angle-deg",
@@ -2819,6 +2821,7 @@ def build_viewer_html(
             fill_spacing_mm=fill_spacing_mm,
             max_stitch_mm=max_stitch_mm,
             fill_angle_deg=fill_angle_deg,
+            fill_mode=fill_mode,
             fit_width_mm=fit_width_mm,
             fit_height_mm=fit_height_mm,
             center=center,
@@ -3051,6 +3054,7 @@ def write_filtered_pes(
             fill_spacing_mm=fill_spacing_mm,
             max_stitch_mm=max_stitch_mm,
             fill_angle_deg=fill_angle_deg,
+            fill_mode=fill_mode,
             fit_width_mm=fit_width_mm,
             fit_height_mm=fit_height_mm,
             center=center,
@@ -3147,6 +3151,7 @@ def write_svg_as_pes(
         fill_spacing_mm=fill_spacing_mm,
         max_stitch_mm=max_stitch_mm,
         fill_angle_deg=fill_angle_deg,
+        fill_mode=fill_mode,
         fit_width_mm=fit_width_mm,
         fit_height_mm=fit_height_mm,
         center=center,

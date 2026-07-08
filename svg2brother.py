@@ -202,9 +202,16 @@ def extract_runs(
     fill_spacing_mm: float,
     max_stitch_mm: float,
     fill_angle_deg: float = 0.0,
+    fill_mode: str = "tatami",
 ) -> list[StitchRun]:
     svg = SVG.parse(str(svg_file), reify=True)
     sample_step_px = sample_step_mm * SVG_PX_PER_MM
+    fill_mode = fill_mode.lower().strip()
+    if fill_mode not in {"horizontal", "tatami", "crosshatch"}:
+        fill_mode = "tatami"
+    fill_angles = [0.0] if fill_mode == "horizontal" else [fill_angle_deg]
+    if fill_mode == "crosshatch":
+        fill_angles.append(-fill_angle_deg if abs(fill_angle_deg) > 0.001 else 90.0)
     runs: list[StitchRun] = []
 
     for element in svg.elements():
@@ -225,13 +232,14 @@ def extract_runs(
         subpaths_mm = [to_mm(subpath_px) for subpath_px in flatten_path(path, sample_step_px)]
         if filled:
             fill_polygons = [subpath_mm for subpath_mm in subpaths_mm if len(subpath_mm) >= 3]
-            for row in hatch_compound_fill(
-                fill_polygons,
-                fill_spacing_mm,
-                max_stitch_mm,
-                fill_angle_deg,
-            ):
-                runs.append(StitchRun(color=color, points_mm=row))
+            for angle in fill_angles:
+                for row in hatch_compound_fill(
+                    fill_polygons,
+                    fill_spacing_mm,
+                    max_stitch_mm,
+                    angle,
+                ):
+                    runs.append(StitchRun(color=color, points_mm=row))
         else:
             for subpath_mm in subpaths_mm:
                 runs.append(
@@ -296,6 +304,7 @@ def extract_runs_for_final_size(
     fit_height_mm: float | None,
     center: bool,
     fill_angle_deg: float = 0.0,
+    fill_mode: str = "tatami",
 ) -> list[StitchRun]:
     runs = extract_runs(
         svg_file,
@@ -303,6 +312,7 @@ def extract_runs_for_final_size(
         fill_spacing_mm=fill_spacing_mm,
         max_stitch_mm=max_stitch_mm,
         fill_angle_deg=fill_angle_deg,
+        fill_mode=fill_mode,
     )
     min_x, min_y, max_x, max_y = bounds(runs)
     width = max(max_x - min_x, 0.001)
@@ -322,6 +332,7 @@ def extract_runs_for_final_size(
             fill_spacing_mm=max(fill_spacing_mm / scale, 0.01),
             max_stitch_mm=max(max_stitch_mm / scale, 0.1),
             fill_angle_deg=fill_angle_deg,
+            fill_mode=fill_mode,
         )
     return transform_runs(
         runs,
@@ -423,6 +434,12 @@ def parse_args() -> argparse.Namespace:
         help="Fill stitch angle in degrees for filled SVG shapes; default: 0",
     )
     parser.add_argument(
+        "--fill-mode",
+        choices=("tatami", "horizontal", "crosshatch"),
+        default="tatami",
+        help="Fill style for filled SVG shapes; default: tatami",
+    )
+    parser.add_argument(
         "--no-center",
         action="store_true",
         help="Keep the design's top-left origin instead of centering it around the hoop origin",
@@ -447,6 +464,7 @@ def main() -> int:
         fill_spacing_mm=args.fill_spacing_mm,
         max_stitch_mm=args.max_stitch_mm,
         fill_angle_deg=args.fill_angle_deg,
+        fill_mode=args.fill_mode,
         fit_width_mm=args.fit_width_mm,
         fit_height_mm=args.fit_height_mm,
         center=not args.no_center,

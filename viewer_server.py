@@ -192,7 +192,7 @@ def coerce_project_settings(settings: dict) -> dict:
     if max_stitch < MIN_BROTHER_STITCH_MM or max_stitch > MAX_BROTHER_EMBROIDERY_STITCH_MM:
         raise ValueError("Project max stitch length must be between 0.5 and 7.0 mm")
     fill_mode = str(settings.get("fill_mode") or "tatami")
-    if fill_mode not in {"tatami", "horizontal"}:
+    if fill_mode not in {"tatami", "horizontal", "crosshatch"}:
         fill_mode = "tatami"
     fill_angle_deg = float(settings.get("fill_angle_deg", 45.0))
     max_colors = int(settings.get("max_colors", 6))
@@ -547,8 +547,8 @@ class ViewerHandler(SimpleHTTPRequestHandler):
             self.send_app_error(str(error))
             return
         fill_mode = form["fill_mode"].value if "fill_mode" in form and form["fill_mode"].value else "tatami"
-        if fill_mode not in {"tatami", "horizontal"}:
-            self.send_app_error("Fill mode must be Tatami or Horizontal")
+        if fill_mode not in {"tatami", "horizontal", "crosshatch"}:
+            self.send_app_error("Fill mode must be Tatami, Crosshatch, or Horizontal")
             return
         try:
             max_colors = int(form["max_colors"].value) if "max_colors" in form and form["max_colors"].value else 6
@@ -685,8 +685,8 @@ class ViewerHandler(SimpleHTTPRequestHandler):
             self.send_app_error(str(error))
             return
         fill_mode = form["fill_mode"].value if "fill_mode" in form and form["fill_mode"].value else "tatami"
-        if fill_mode not in {"tatami", "horizontal"}:
-            self.send_app_error("Fill mode must be Tatami or Horizontal")
+        if fill_mode not in {"tatami", "horizontal", "crosshatch"}:
+            self.send_app_error("Fill mode must be Tatami, Crosshatch, or Horizontal")
             return
         try:
             max_colors = int(form["max_colors"].value) if "max_colors" in form and form["max_colors"].value else 6
