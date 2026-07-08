@@ -380,6 +380,9 @@ class OpenStitchWindow(QMainWindow):
         open_button = QPushButton("Open and Convert")
         open_button.clicked.connect(self.open_design)
         layout.addWidget(open_button)
+        safe_density = QPushButton("Apply Safer Density")
+        safe_density.clicked.connect(self.apply_safer_density)
+        layout.addWidget(safe_density)
         self.stats_label = QLabel("No design loaded.")
         self.stats_label.setWordWrap(True)
         self.stats_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
@@ -501,6 +504,15 @@ class OpenStitchWindow(QMainWindow):
             return
         self.stats_label.setText("Updating stitches...")
         self.refresh_timer.start()
+
+    def apply_safer_density(self) -> None:
+        self._loading_settings = True
+        try:
+            self.fill_mode.setCurrentText("tatami")
+            self.fill_spacing.setValue(max(self.fill_spacing.value(), 0.45))
+        finally:
+            self._loading_settings = False
+        self.schedule_refresh()
 
     def refresh_current_design(self) -> None:
         if self.state is None:
@@ -650,14 +662,38 @@ class OpenStitchWindow(QMainWindow):
             return
         min_x, min_y, max_x, max_y = self.state.bounds
         counts = self.state.counts
+        area = max((max_x - min_x) * (max_y - min_y), 0.001)
+        command_density = (
+            counts.get("needle_points", 0)
+            + counts.get("jumps", 0)
+            + counts.get("trims", 0)
+            + counts.get("color_changes", 0)
+        ) / area
+        stitch_density = counts.get("needle_points", 0) / area
+        micro_segments = sum(
+            1
+            for segment in self.state.segments
+            if segment["kind"] == "stitch"
+            and 0 < math.hypot(segment["x2"] - segment["x1"], segment["y2"] - segment["y1"]) < 0.3
+        )
+        quality_notes: list[str] = []
+        if command_density > 3.0:
+            quality_notes.append(
+                "High saturation risk. Try Apply Safer Density or increase fill spacing."
+            )
+        if micro_segments:
+            quality_notes.append(f"{micro_segments} preview stitch segments are under 0.30 mm.")
+        quality_text = "\n".join(quality_notes) if quality_notes else "Quality checks: no obvious density warning."
         self.stats_label.setText(
             f"{self.state.working_source.name}\n"
             f"Size: {max_x - min_x:.1f} x {max_y - min_y:.1f} mm\n"
             f"Needle points: {counts.get('needle_points', 0)}\n"
             f"Jumps: {counts.get('jumps', 0)}  Trims: {counts.get('trims', 0)}  "
             f"Color changes: {counts.get('color_changes', 0)}\n"
+            f"Density: {stitch_density:.2f} st/mm2, {command_density:.2f} commands/mm2\n"
             f"Estimated stitch time: {estimate_stitch_time(counts, self.state.color_blocks)}\n"
-            f"PES: {self.state.pes_path.name}"
+            f"PES: {self.state.pes_path.name}\n"
+            f"{quality_text}"
         )
 
     def populate_threads(self) -> None:

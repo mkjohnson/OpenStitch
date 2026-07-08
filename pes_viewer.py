@@ -2901,7 +2901,7 @@ def write_segments_as_pes(
     thread_label_overrides: dict[int, str] | None = None,
     *,
     max_stitch_mm: float = 7.0,
-    min_stitch_mm: float = 0.18,
+    min_stitch_mm: float = 0.3,
     lock_stitch_mm: float = 0.7,
 ) -> list[dict]:
     selected_blocks = selected_blocks if selected_blocks is not None else {
@@ -2979,6 +2979,7 @@ def write_segments_as_pes(
             return
         ensure_active_block(block_index)
         start_units = rounded_points[0]
+        current_units: tuple[int, int] | None = None
         if previous_point is None or to_embroidery_units(previous_point) != start_units:
             if previous_point is None:
                 jump_points = [start_units]
@@ -2997,10 +2998,17 @@ def write_segments_as_pes(
                     continue
                 pattern.add_stitch_absolute(embroidery.JUMP, jump_x, jump_y)
                 previous_jump = (jump_x, jump_y)
+                current_units = (jump_x, jump_y)
+        else:
+            current_units = start_units
         for x, y in rounded_points[1:]:
+            if current_units == (x, y):
+                continue
             pattern.add_stitch_absolute(embroidery.STITCH, x, y)
-        last_x, last_y = rounded_points[-1]
-        previous_point = (last_x / EMB_UNITS_PER_MM, last_y / EMB_UNITS_PER_MM)
+            current_units = (x, y)
+        if current_units is None or current_units == start_units:
+            return
+        previous_point = (current_units[0] / EMB_UNITS_PER_MM, current_units[1] / EMB_UNITS_PER_MM)
 
     def write_segment_sequence(sequence: list[dict]) -> None:
         current_block: int | None = None
