@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import base64
+from email.message import EmailMessage
 import json
 import math
+import os
 import shutil
 import sys
 import uuid
@@ -23,7 +25,9 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QFrame,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
+    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMainWindow,
@@ -33,6 +37,8 @@ from PySide6.QtWidgets import (
     QSpinBox,
     QSplitter,
     QTabWidget,
+    QTableWidget,
+    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -50,7 +56,7 @@ from pes_viewer import (
     write_segments_as_pes,
 )
 from thread_catalog import load_thread_catalog
-from thread_inventory import normalize_hex
+from thread_inventory import add_inventory_item, delete_inventory_item, load_inventory, normalize_hex
 from thread_settings import DEFAULT_THREAD_WEIGHT, recommended_fill_spacing
 from viewer_server import project_settings, project_summary_text, safe_name, write_project_file
 
@@ -238,10 +244,12 @@ class StitchCanvas(QWidget):
 
 
 class ThreadRow(QWidget):
-    def __init__(self, block: dict, on_changed) -> None:
+    def __init__(self, block: dict, catalog: list[dict], on_changed) -> None:
         super().__init__()
         self.block = block
+        self.catalog = catalog
         self.on_changed = on_changed
+        self._syncing = False
         layout = QHBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
         self.checkbox = QCheckBox()
@@ -252,26 +260,63 @@ class ThreadRow(QWidget):
         self.swatch.clicked.connect(self.choose_color)
         self.label = QLabel()
         self.label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.hex_input = QLineEdit()
+        self.hex_input.setFixedWidth(82)
+        self.hex_input.editingFinished.connect(self.apply_hex)
+        self.thread_select = QComboBox()
+        self.thread_select.setMinimumWidth(170)
+        self.thread_select.addItem("Known threads", "")
+        for item in catalog:
+            label = f"{item['brand']} {item['number']} {item['name']}"
+            self.thread_select.addItem(label, item["color"])
+        self.thread_select.currentIndexChanged.connect(self.apply_thread_choice)
+        edit_button = QPushButton("Edit")
+        edit_button.clicked.connect(self.choose_color)
         layout.addWidget(self.checkbox)
         layout.addWidget(self.swatch)
         layout.addWidget(self.label, 1)
+        layout.addWidget(self.hex_input)
+        layout.addWidget(self.thread_select)
+        layout.addWidget(edit_button)
         self.refresh()
 
     def refresh(self) -> None:
         color = self.block["color"]
         self.swatch.setStyleSheet(f"background:{color}; border:1px solid #89958f;")
+        if self.hex_input.text().lower() != color.lower():
+            self.hex_input.setText(color)
         self.label.setText(
             f"Block {self.block['index'] + 1}: {self.block.get('label', color)}\n"
             f"{color} - {self.block.get('stitches', 0)} stitches"
         )
 
+    def set_color(self, color: str, label: str | None = None) -> None:
+        try:
+            normalized = normalize_hex(color)
+        except ValueError:
+            QMessageBox.warning(self, "OpenStitch", "Thread color must be a valid hex color like #ffcc00.")
+            self.hex_input.setText(self.block["color"])
+            return
+        self.block["color"] = normalized
+        if label:
+            self.block["label"] = label
+        self.refresh()
+        self.on_changed()
+
     def choose_color(self) -> None:
         chosen = QColorDialog.getColor(QColor(self.block["color"]), self, "Choose thread color")
         if not chosen.isValid():
             return
-        self.block["color"] = normalize_hex(chosen.name())
-        self.refresh()
-        self.on_changed()
+        self.set_color(chosen.name())
+
+    def apply_hex(self) -> None:
+        self.set_color(self.hex_input.text())
+
+    def apply_thread_choice(self) -> None:
+        color = self.thread_select.currentData()
+        if not color:
+            return
+        self.set_color(str(color), self.thread_select.currentText())
 
 
 class OpenStitchWindow(QMainWindow):
@@ -303,6 +348,7 @@ class OpenStitchWindow(QMainWindow):
         left.setMinimumWidth(310)
         left.addTab(self._conversion_tab(), "Convert")
         left.addTab(self._library_tab(), "Library")
+        left.addTab(self._inventory_tab(), "Inventory")
         root.addWidget(left)
 
         self.canvas = StitchCanvas()
@@ -422,6 +468,37 @@ class OpenStitchWindow(QMainWindow):
         layout.addLayout(buttons)
         return panel
 
+    def _inventory_tab(self) -> QWidget:
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+        self.inventory_table = QTableWidget(0, 4)
+        self.inventory_table.setHorizontalHeaderLabels(["Brand", "Name/Number", "Color", "Qty"])
+        layout.addWidget(self.inventory_table, 1)
+
+        form = QFormLayout()
+        self.inventory_brand = QLineEdit()
+        self.inventory_name = QLineEdit()
+        self.inventory_color = QLineEdit("#000000")
+        self.inventory_qty = QSpinBox()
+        self.inventory_qty.setRange(0, 999)
+        self.inventory_qty.setValue(1)
+        form.addRow("Brand", self.inventory_brand)
+        form.addRow("Name/number", self.inventory_name)
+        form.addRow("Hex color", self.inventory_color)
+        form.addRow("Quantity", self.inventory_qty)
+        layout.addLayout(form)
+
+        buttons = QHBoxLayout()
+        add_button = QPushButton("Add Thread")
+        add_button.clicked.connect(self.add_inventory_thread)
+        delete_button = QPushButton("Delete Selected")
+        delete_button.clicked.connect(self.delete_inventory_thread)
+        buttons.addWidget(add_button)
+        buttons.addWidget(delete_button)
+        layout.addLayout(buttons)
+        self.refresh_inventory()
+        return panel
+
     def _thread_panel(self) -> QWidget:
         panel = QWidget()
         layout = QVBoxLayout(panel)
@@ -439,8 +516,11 @@ class OpenStitchWindow(QMainWindow):
         save.clicked.connect(self.save_pes_as)
         project = QPushButton("Save Project")
         project.clicked.connect(self.save_project_as)
+        email = QPushButton("Email Project")
+        email.clicked.connect(self.email_project)
         buttons.addWidget(save)
         buttons.addWidget(project)
+        buttons.addWidget(email)
         layout.addLayout(buttons)
         controls = QFrame()
         control_layout = QVBoxLayout(controls)
@@ -566,6 +646,13 @@ class OpenStitchWindow(QMainWindow):
         write_outputs: bool = True,
     ) -> None:
         OUTPUT_DIR.mkdir(exist_ok=True)
+        previous_blocks = {
+            block["index"]: {
+                "color": block.get("color"),
+                "label": block.get("label"),
+            }
+            for block in self.state.color_blocks
+        } if self.state is not None and not reset_view else {}
         working_source = source_path
         if source_path.parent.resolve() != OUTPUT_DIR.resolve():
             name = safe_name(source_path.name)
@@ -573,6 +660,18 @@ class OpenStitchWindow(QMainWindow):
             working_source = OUTPUT_DIR / f"{Path(name).stem}_{job_id}{Path(name).suffix.lower()}"
             shutil.copy2(source_path, working_source)
         segments, commands, blocks, counts = self.collect_design(working_source, settings)
+        if previous_blocks:
+            for block in blocks:
+                previous = previous_blocks.get(block["index"])
+                if not previous or not previous.get("color"):
+                    continue
+                block["color"] = previous["color"]
+                if previous.get("label"):
+                    block["label"] = previous["label"]
+            block_colors = {block["index"]: block["color"] for block in blocks}
+            for segment in segments:
+                if segment["blockIndex"] in block_colors:
+                    segment["color"] = block_colors[segment["blockIndex"]]
         bounds = design_bounds(segments, commands)
         if write_outputs or self.state is None:
             if working_source.suffix.lower() == ".pes":
@@ -705,7 +804,7 @@ class OpenStitchWindow(QMainWindow):
         if self.state is None:
             return
         for block in self.state.color_blocks:
-            row = ThreadRow(block, self.thread_changed)
+            row = ThreadRow(block, self.catalog, self.thread_changed)
             self.thread_rows.append(row)
             self.thread_layout.insertWidget(self.thread_layout.count() - 1, row)
         self.canvas.set_visible_blocks(self.selected_blocks())
@@ -787,19 +886,126 @@ class OpenStitchWindow(QMainWindow):
         if self.state is None:
             self.shopping_label.setText("")
             return
+        self.shopping_label.setText(self.shopping_list_text(max_lines=12))
+
+    def shopping_list_text(self, max_lines: int | None = None) -> str:
+        if self.state is None:
+            return "Thread shopping list\n\nNo design loaded.\n"
         usage = estimate_thread_usage(self.state.segments)
         catalog = self.catalog
+        inventory = load_inventory()
         lines = ["Shopping list"]
         for row in self.thread_rows:
             if not row.checkbox.isChecked():
                 continue
             color = row.block["color"]
+            if inventory:
+                closest_owned = min(inventory, key=lambda item: self._rgb_distance(color, item["color"]))
+                if self._rgb_distance(color, closest_owned["color"]) <= 64:
+                    continue
             if not catalog:
                 continue
             match = min(catalog, key=lambda item: self._rgb_distance(color, item["color"]))
             meters = usage.get(row.block["index"], 0.0)
             lines.append(f"{match['brand']} {match['number']} {match['name']} ({match['color']}) - {meters:.2f} m")
-        self.shopping_label.setText("\n".join(lines[:12]))
+        if len(lines) == 1:
+            lines.append("All selected colors have close inventory matches.")
+        return "\n".join(lines[:max_lines] if max_lines else lines)
+
+    def refresh_inventory(self) -> None:
+        if not hasattr(self, "inventory_table"):
+            return
+        items = load_inventory()
+        self.inventory_table.setRowCount(len(items))
+        for row, item in enumerate(items):
+            brand = QTableWidgetItem(item["brand"])
+            brand.setData(Qt.UserRole, item["id"])
+            self.inventory_table.setItem(row, 0, brand)
+            self.inventory_table.setItem(row, 1, QTableWidgetItem(item["name"]))
+            self.inventory_table.setItem(row, 2, QTableWidgetItem(item["color"]))
+            self.inventory_table.setItem(row, 3, QTableWidgetItem(str(item["quantity"])))
+
+    def add_inventory_thread(self) -> None:
+        try:
+            add_inventory_item(
+                brand=self.inventory_brand.text(),
+                name=self.inventory_name.text(),
+                color=self.inventory_color.text(),
+                quantity=self.inventory_qty.value(),
+            )
+        except Exception as error:
+            QMessageBox.critical(self, "OpenStitch", str(error))
+            return
+        self.inventory_brand.clear()
+        self.inventory_name.clear()
+        self.inventory_color.setText("#000000")
+        self.inventory_qty.setValue(1)
+        self.refresh_inventory()
+        self.update_shopping_list()
+
+    def delete_inventory_thread(self) -> None:
+        row = self.inventory_table.currentRow()
+        if row < 0:
+            return
+        item = self.inventory_table.item(row, 0)
+        item_id = item.data(Qt.UserRole) if item else ""
+        if item_id:
+            delete_inventory_item(str(item_id))
+        self.refresh_inventory()
+        self.update_shopping_list()
+
+    def email_project(self) -> None:
+        if self.state is None:
+            QMessageBox.information(self, "OpenStitch", "Open a design first.")
+            return
+        target, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Email Draft",
+            str(self.state.pes_path.with_name(f"{self.state.pes_path.stem}_email_project.eml")),
+            "Email message (*.eml)",
+        )
+        if not target:
+            return
+        recipient, ok = QInputDialog.getText(self, "Email Project", "Recipient email address:")
+        if not ok:
+            return
+        eml_path = Path(target)
+        zip_name = f"{self.state.pes_path.stem}_project.zip"
+        zip_path = eml_path.with_name(zip_name)
+        summary_path = self.state.project_path.with_suffix(".summary.txt")
+        if summary_path.exists():
+            summary_text = summary_path.read_text(encoding="utf-8", errors="replace")
+        else:
+            summary_text = project_summary_text(
+                self.state.working_source,
+                self.state.settings,
+                self.state.bounds,
+                self.state.counts,
+            )
+        with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.write(self.state.pes_path, arcname=self.state.pes_path.name)
+            archive.writestr("thread-shopping-list.txt", self.shopping_list_text())
+            archive.writestr("project-summary.txt", summary_text)
+        message = EmailMessage()
+        message["Subject"] = f"OpenStitch project: {self.state.pes_path.stem}"
+        if recipient.strip():
+            message["To"] = recipient.strip()
+        message["X-Unsent"] = "1"
+        message.set_content(
+            "Attached is the OpenStitch project ZIP with the PES file, thread shopping list, and project summary.\n"
+        )
+        message.add_attachment(
+            zip_path.read_bytes(),
+            maintype="application",
+            subtype="zip",
+            filename=zip_name,
+        )
+        eml_path.write_bytes(message.as_bytes())
+        try:
+            os.startfile(str(eml_path))
+        except OSError:
+            pass
+        QMessageBox.information(self, "OpenStitch", f"Saved email draft and ZIP:\n{eml_path}\n{zip_path}")
 
     def refresh_library(self) -> None:
         self.library_list.clear()
