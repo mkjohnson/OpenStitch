@@ -83,9 +83,9 @@ class StitchCanvas(QWidget):
         self.current_step = 0
         self.zoom = 1.0
         self.pan = QPointF(0, 0)
-        self.show_jumps = True
-        self.show_points = True
-        self.show_markers = True
+        self.show_jumps = False
+        self.show_points = False
+        self.show_markers = False
         self.visible_blocks: set[int] | None = None
         self._drag_start: QPoint | None = None
         self._drag_pan = QPointF(0, 0)
@@ -451,13 +451,13 @@ class OpenStitchWindow(QMainWindow):
         play = QPushButton("Play")
         play.clicked.connect(self.toggle_playback)
         self.show_jumps = QCheckBox("Show jumps")
-        self.show_jumps.setChecked(True)
+        self.show_jumps.setChecked(False)
         self.show_jumps.stateChanged.connect(self.update_canvas_flags)
         self.show_points = QCheckBox("Show needle points")
-        self.show_points.setChecked(True)
+        self.show_points.setChecked(False)
         self.show_points.stateChanged.connect(self.update_canvas_flags)
         self.show_markers = QCheckBox("Show trims/color changes")
-        self.show_markers.setChecked(True)
+        self.show_markers.setChecked(False)
         self.show_markers.stateChanged.connect(self.update_canvas_flags)
         control_layout.addWidget(play)
         control_layout.addWidget(self.step_label)
