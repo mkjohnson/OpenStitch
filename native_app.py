@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QSlider,
     QSpinBox,
     QSplitter,
@@ -328,40 +329,58 @@ class StitchCanvas(QWidget):
 
 
 class ThreadRow(QWidget):
-    def __init__(self, block: dict, catalog: list[dict], on_changed) -> None:
+    def __init__(self, block: dict, catalog: list[dict], on_changed, on_add_inventory) -> None:
         super().__init__()
         self.block = block
         self.catalog = catalog
         self.on_changed = on_changed
+        self.on_add_inventory = on_add_inventory
         self._syncing = False
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(4, 4, 4, 4)
+        self.setObjectName("threadRow")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(6)
+        self.setStyleSheet("#threadRow { border: 1px solid #3a3a3a; border-radius: 6px; }")
+
+        header = QHBoxLayout()
         self.checkbox = QCheckBox()
         self.checkbox.setChecked(True)
         self.checkbox.stateChanged.connect(on_changed)
         self.swatch = QPushButton()
-        self.swatch.setFixedSize(28, 24)
+        self.swatch.setFixedSize(34, 28)
         self.swatch.clicked.connect(self.choose_color)
         self.label = QLabel()
+        self.label.setWordWrap(True)
         self.label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        header.addWidget(self.checkbox)
+        header.addWidget(self.swatch)
+        header.addWidget(self.label, 1)
+        layout.addLayout(header)
+
+        edit_row = QHBoxLayout()
         self.hex_input = QLineEdit()
-        self.hex_input.setFixedWidth(82)
+        self.hex_input.setMinimumWidth(84)
         self.hex_input.editingFinished.connect(self.apply_hex)
         self.thread_select = QComboBox()
-        self.thread_select.setMinimumWidth(170)
+        self.thread_select.setMinimumWidth(160)
         self.thread_select.addItem("Known threads", "")
         for item in catalog:
             label = f"{item['brand']} {item['number']} {item['name']}"
-            self.thread_select.addItem(label, item["color"])
+            self.thread_select.addItem(label, dict(item))
         self.thread_select.currentIndexChanged.connect(self.apply_thread_choice)
+        edit_row.addWidget(self.hex_input)
+        edit_row.addWidget(self.thread_select, 1)
+        layout.addLayout(edit_row)
+
+        actions = QHBoxLayout()
         edit_button = QPushButton("Edit")
         edit_button.clicked.connect(self.choose_color)
-        layout.addWidget(self.checkbox)
-        layout.addWidget(self.swatch)
-        layout.addWidget(self.label, 1)
-        layout.addWidget(self.hex_input)
-        layout.addWidget(self.thread_select)
-        layout.addWidget(edit_button)
+        add_inventory = QPushButton("Add to Inventory")
+        add_inventory.clicked.connect(lambda: self.on_add_inventory(self))
+        actions.addStretch(1)
+        actions.addWidget(edit_button)
+        actions.addWidget(add_inventory)
+        layout.addLayout(actions)
         self.refresh()
 
     def refresh(self) -> None:
@@ -397,10 +416,23 @@ class ThreadRow(QWidget):
         self.set_color(self.hex_input.text())
 
     def apply_thread_choice(self) -> None:
-        color = self.thread_select.currentData()
-        if not color:
+        item = self.thread_select.currentData()
+        if not item:
             return
-        self.set_color(str(color), self.thread_select.currentText())
+        if isinstance(item, dict):
+            self.set_color(str(item["color"]), self.thread_select.currentText())
+        else:
+            self.set_color(str(item), self.thread_select.currentText())
+
+    def inventory_details(self, fallback_brand: str) -> tuple[str, str, str]:
+        item = self.thread_select.currentData()
+        if isinstance(item, dict) and item.get("color"):
+            return (
+                str(item.get("brand") or fallback_brand),
+                f"{item.get('number', '')} {item.get('name', '')}".strip(),
+                self.block["color"],
+            )
+        return fallback_brand, self.block.get("label", self.block["color"]), self.block["color"]
 
 
 class OpenStitchWindow(QMainWindow):
@@ -811,7 +843,11 @@ class OpenStitchWindow(QMainWindow):
         self.thread_container = QWidget()
         self.thread_layout = QVBoxLayout(self.thread_container)
         self.thread_layout.addStretch(1)
-        layout.addWidget(self.thread_container, 1)
+        thread_scroll = QScrollArea()
+        thread_scroll.setWidgetResizable(True)
+        thread_scroll.setFrameShape(QFrame.NoFrame)
+        thread_scroll.setWidget(self.thread_container)
+        layout.addWidget(thread_scroll, 1)
         self.shopping_label = QLabel("")
         self.shopping_label.setWordWrap(True)
         self.shopping_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
@@ -1348,7 +1384,7 @@ class OpenStitchWindow(QMainWindow):
             return
         catalog = self.selected_catalog()
         for block in self.state.color_blocks:
-            row = ThreadRow(block, catalog, self.thread_changed)
+            row = ThreadRow(block, catalog, self.thread_changed, self.add_thread_row_to_inventory)
             self.thread_rows.append(row)
             self.thread_layout.insertWidget(self.thread_layout.count() - 1, row)
         self.canvas.set_visible_blocks(self.selected_blocks())
@@ -1590,6 +1626,22 @@ class OpenStitchWindow(QMainWindow):
         if len(lines) == 1:
             lines.append("All selected colors have close inventory matches.")
         return "\n".join(lines[:max_lines] if max_lines else lines)
+
+    def add_thread_row_to_inventory(self, row: ThreadRow) -> None:
+        brand, name, color = row.inventory_details(self.selected_thread_brand())
+        try:
+            add_inventory_item(
+                brand=brand,
+                name=name,
+                color=color,
+                quantity=1,
+            )
+        except Exception as error:
+            QMessageBox.critical(self, "OpenStitch", str(error))
+            return
+        self.refresh_inventory()
+        self.update_shopping_list()
+        QMessageBox.information(self, "OpenStitch", f"Added {brand} {name} ({normalize_hex(color)}) to inventory.")
 
     def refresh_inventory(self) -> None:
         if not hasattr(self, "inventory_table"):
