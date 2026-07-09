@@ -48,6 +48,7 @@ powershell -ExecutionPolicy Bypass -File .\build_exe.ps1
 ```
 
 The built app is written to `dist\OpenStitch.exe`.
+Build the EXE locally only. Do not commit `dist\OpenStitch.exe` or other build output to GitHub.
 
 The app provides:
 
@@ -66,6 +67,15 @@ python app.py
 ```
 
 Then open `http://127.0.0.1:8765/`.
+
+## Project Site
+
+The `docs/` folder contains a static GitHub Pages site for OpenStitch. It is a
+public project page with screenshots, feature notes, and local setup
+instructions. It does not run the converter backend in the browser.
+
+To publish it, open the repository settings on GitHub, go to `Pages`, choose
+`Deploy from a branch`, select `main`, and set the folder to `/docs`.
 
 ## PES Viewer CLI
 

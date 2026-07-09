@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OpenStitch</title>
+  <meta name="description" content="OpenStitch converts SVG, image, PDF, and PES embroidery designs into Brother-compatible PES files with stitch-path previews.">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="#top">OpenStitch</a>
+    <nav aria-label="Primary navigation">
+      <a href="#features">Features</a>
+      <a href="#run">Run Locally</a>
+      <a href="#pages">GitHub Pages</a>
+      <a href="https://github.com/mkjohnson/OpenStitch">GitHub</a>
+    </nav>
+  </header>
+
+  <main id="top">
+    <section class="hero">
+      <div class="hero-copy">
+        <p class="eyebrow">Embroidery digitizing utility</p>
+        <h1>OpenStitch</h1>
+        <p class="lede">
+          Convert SVG, JPG, PNG, PDF, and PES designs into Brother-compatible embroidery files,
+          inspect stitch paths, plan thread colors, and troubleshoot before the design reaches the machine.
+        </p>
+        <div class="actions">
+          <a class="button primary" href="#run">Run Locally</a>
+          <a class="button secondary" href="https://github.com/mkjohnson/OpenStitch">View Source</a>
+        </div>
+      </div>
+      <figure class="preview">
+        <img src="assets/openstitch-preview.png" alt="Generic OpenStitch stitch preview with visible stitch rows, needle points, jumps, and color blocks.">
+        <figcaption>Generic stitch preview with measurement grid, thread blocks, and path inspection.</figcaption>
+      </figure>
+    </section>
+
+    <section id="features" class="section">
+      <div class="section-heading">
+        <p class="eyebrow">What it does</p>
+        <h2>Desktop-first embroidery workflow</h2>
+      </div>
+      <div class="feature-grid">
+        <article>
+          <h3>Convert artwork</h3>
+          <p>Import SVG, JPG, PNG, PDF, and PES files. Generate Brother PES output with adjustable size, fill spacing, max stitch length, color flattening, and fill mode.</p>
+        </article>
+        <article>
+          <h3>Inspect stitch paths</h3>
+          <p>Use the animated toolpath preview, slider, zoom, pan, measurements, jumps, trims, color-change markers, and optional needle points to understand the actual stitch sequence.</p>
+        </article>
+        <article>
+          <h3>Plan thread</h3>
+          <p>Match design colors against known Floriani thread colors, track inventory, estimate usage, and build a shopping list for colors that need to be purchased.</p>
+        </article>
+        <article>
+          <h3>Edit and export</h3>
+          <p>Deselect or merge color blocks, apply changes, save projects, email project bundles, draw or delete stitches, and export a fresh PES file.</p>
+        </article>
+      </div>
+    </section>
+
+    <section id="run" class="section split">
+      <div>
+        <p class="eyebrow">Run locally</p>
+        <h2>The converter needs Python or the Windows EXE</h2>
+        <p>
+          GitHub Pages can show this project site, but it cannot run the Python backend,
+          write PES files, or access your local embroidery project files. Use the desktop app
+          or local web server for real conversions.
+        </p>
+      </div>
+      <div class="command-panel">
+        <h3>From source</h3>
+        <pre><code>pip install -r requirements.txt
+python app_launcher.py</code></pre>
+        <h3>Local web UI</h3>
+        <pre><code>python app.py
+# open http://127.0.0.1:8765/</code></pre>
+        <h3>Build local EXE</h3>
+        <pre><code>powershell -ExecutionPolicy Bypass -File .\build_exe.ps1</code></pre>
+      </div>
+    </section>
+
+    <section id="pages" class="section notice">
+      <p class="eyebrow">GitHub Pages</p>
+      <h2>What this site is for</h2>
+      <p>
+        This static site is a public front door for OpenStitch: documentation, screenshots,
+        supported formats, local setup, and links to the repository. The generated EXE remains
+        local build output and should not be committed to GitHub.
+      </p>
+    </section>
+  </main>
+
+  <footer>
+    <span>OpenStitch is a work in progress. Test carefully before stitching on your machine.</span>
+    <a href="https://github.com/mkjohnson/OpenStitch">github.com/mkjohnson/OpenStitch</a>
+  </footer>
+</body>
+</html>
