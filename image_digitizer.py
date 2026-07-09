@@ -309,7 +309,7 @@ def image_to_segments(
     fill_mode: str = "tatami",
     fill_angle_deg: float = 45.0,
     fill_spacing_mm: float = 0.5,
-    min_run_mm: float = 0.15,
+    min_run_mm: float = 0.3,
     background_threshold: int = 245,
     color_merge_distance: float = 56.0,
     max_stitch_mm: float = 3.0,
@@ -333,6 +333,7 @@ def image_to_segments(
     origin_x = -width_mm / 2
     origin_y = -height_mm / 2
     min_run_px = max(1, int(math.ceil(min_run_mm * px_per_mm)))
+    min_detail_run_px = max(1, int(math.ceil(0.15 * px_per_mm)))
     row_step_px = max(1, int(math.floor(fill_spacing_mm * px_per_mm)))
     fill_mode = fill_mode.lower().strip()
     if fill_mode not in {"horizontal", "tatami", "crosshatch", "mixed", "outline", "contour"}:
@@ -380,7 +381,7 @@ def image_to_segments(
                         start = col
                 elif start is not None:
                     span = col - start
-                    if span >= min_run_px:
+                    if span >= min_detail_run_px:
                         run_count += 1
                         stitch_estimate += max(1, int(math.ceil((span / px_per_mm) / max(max_stitch_mm, 0.1))))
                         if span < min_run_px * 1.5:
@@ -388,7 +389,7 @@ def image_to_segments(
                     start = None
             if start is not None:
                 span = working_width - start
-                if span >= min_run_px:
+                if span >= min_detail_run_px:
                     run_count += 1
                     stitch_estimate += max(1, int(math.ceil((span / px_per_mm) / max(max_stitch_mm, 0.1))))
                     if span < min_run_px * 1.5:
@@ -540,6 +541,23 @@ def image_to_segments(
             last_y = y
             previous_point = (x, y)
 
+    def add_preserved_range(ranges: list[tuple[int, int]], left: int, right: int, width: int) -> None:
+        span = right - left + 1
+        if span < min_detail_run_px:
+            return
+        if span < min_run_px:
+            center = (left + right) / 2
+            left = int(round(center - ((min_run_px - 1) / 2)))
+            right = left + min_run_px - 1
+            if left < 0:
+                right -= left
+                left = 0
+            if right >= width:
+                left -= right - width + 1
+                right = width - 1
+            left = max(0, left)
+        ranges.append((left, right))
+
     for palette_index in color_order:
         if palette_index >= len(colors):
             continue
@@ -655,11 +673,10 @@ def image_to_segments(
                         if start is None:
                             start = col
                     elif start is not None:
-                        if col - start >= min_run_px:
-                            ranges.append((start, col - 1))
+                        add_preserved_range(ranges, start, col - 1, working_width)
                         start = None
-                if start is not None and working_width - start >= min_run_px:
-                    ranges.append((start, working_width - 1))
+                if start is not None:
+                    add_preserved_range(ranges, start, working_width - 1, working_width)
 
                 if row % 2:
                     ranges.reverse()

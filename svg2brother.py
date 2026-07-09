@@ -93,7 +93,8 @@ def to_mm(points_px: Iterable[tuple[float, float]]) -> list[tuple[float, float]]
     return [(x / SVG_PX_PER_MM, y / SVG_PX_PER_MM) for x, y in points_px]
 
 
-MIN_FILL_STITCH_MM = 0.15
+MIN_FILL_STITCH_MM = 0.3
+MIN_DETAIL_RUN_MM = 0.15
 
 
 def split_long_stitches(
@@ -189,8 +190,13 @@ def hatch_compound_fill(
 
         xs.sort()
         for left, right in zip(xs[0::2], xs[1::2]):
-            if right - left < min_stitch_mm:
+            run_width = right - left
+            if run_width < MIN_DETAIL_RUN_MM:
                 continue
+            if run_width < min_stitch_mm:
+                center_x = (left + right) / 2
+                left = center_x - (min_stitch_mm / 2)
+                right = center_x + (min_stitch_mm / 2)
             run = [(left, y), (right, y)]
             if row_index % 2:
                 run.reverse()

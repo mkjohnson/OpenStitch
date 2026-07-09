@@ -1079,7 +1079,9 @@ class OpenStitchWindow(QMainWindow):
                 self.fill_mode.setCurrentText("mixed")
                 changes.append("changed fill mode to mixed for a less directional fill")
             if command_density > 2.4:
-                new_spacing = min(2.0, max(self.fill_spacing.value() + 0.10, 0.50))
+                density_scale = math.sqrt(command_density / 2.4)
+                new_spacing = min(2.0, max(self.fill_spacing.value() * density_scale, 0.50))
+                new_spacing = round(new_spacing / 0.05) * 0.05
                 if new_spacing != self.fill_spacing.value():
                     self.fill_spacing.setValue(new_spacing)
                     changes.append(f"increased fill spacing to {new_spacing:.2f} mm to reduce saturation")

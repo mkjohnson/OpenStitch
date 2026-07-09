@@ -3483,10 +3483,10 @@ def write_segments_as_pes(
     thread_label_overrides: dict[int, str] | None = None,
     *,
     max_stitch_mm: float = 7.0,
-    min_stitch_mm: float = 0.15,
+    min_stitch_mm: float = 0.3,
     lock_stitch_mm: float = 1.0,
     connect_short_gaps: bool = False,
-    min_run_length_mm: float = 0.15,
+    min_run_length_mm: float = 0.3,
     stitch_perimeter: bool = False,
 ) -> list[dict]:
     selected_blocks = selected_blocks if selected_blocks is not None else {
