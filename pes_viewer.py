@@ -182,6 +182,39 @@ def design_bounds(segments: list[dict], commands: list[dict]) -> tuple[float, fl
     return min_x, min_y, max_x, max_y
 
 
+def normalize_positive_coordinates(
+    segments: list[dict],
+    commands: list[dict],
+    *,
+    minimum_mm: float = 0.0,
+) -> tuple[list[dict], list[dict]]:
+    min_x, min_y, _, _ = design_bounds(segments, commands)
+    shift_x = minimum_mm - min_x if min_x < minimum_mm else 0.0
+    shift_y = minimum_mm - min_y if min_y < minimum_mm else 0.0
+    if abs(shift_x) < 1e-9 and abs(shift_y) < 1e-9:
+        return segments, commands
+
+    normalized_segments: list[dict] = []
+    for segment in segments:
+        normalized = dict(segment)
+        normalized["x1"] = normalized["x1"] + shift_x
+        normalized["y1"] = normalized["y1"] + shift_y
+        normalized["x2"] = normalized["x2"] + shift_x
+        normalized["y2"] = normalized["y2"] + shift_y
+        normalized_segments.append(normalized)
+
+    normalized_commands: list[dict] = []
+    for command in commands:
+        normalized = dict(command)
+        if "x" in normalized:
+            normalized["x"] = normalized["x"] + shift_x
+        if "y" in normalized:
+            normalized["y"] = normalized["y"] + shift_y
+        normalized_commands.append(normalized)
+
+    return normalized_segments, normalized_commands
+
+
 def render_polyline(points: list[tuple[float, float]], color: str, class_name: str) -> str:
     encoded_points = " ".join(f"{x:.3f},{y:.3f}" for x, y in points)
     return (
@@ -3458,6 +3491,7 @@ def build_viewer_html(
         counts,
     )
     segments, color_blocks = apply_thread_metadata(input_file, segments, color_blocks)
+    segments, commands = normalize_positive_coordinates(segments, commands)
 
     html_text = render_html(
         input_file,
@@ -3546,6 +3580,7 @@ def write_segments_as_pes(
             offset_mm=perimeter_offset_mm,
             passes=perimeter_passes,
         )
+    segments, _ = normalize_positive_coordinates(segments, [])
 
     def ensure_active_block(block_index: int) -> None:
         nonlocal active_block

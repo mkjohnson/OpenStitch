@@ -59,6 +59,7 @@ from pes_viewer import (
     estimate_thread_usage,
     classify_fill_types,
     group_color_blocks_by_inventory,
+    normalize_positive_coordinates,
     thread_metadata_path,
     write_segments_as_pes,
 )
@@ -1355,6 +1356,7 @@ class OpenStitchWindow(QMainWindow):
             for segment in segments:
                 if segment["blockIndex"] in block_colors:
                     segment["color"] = block_colors[segment["blockIndex"]]
+        segments, commands = normalize_positive_coordinates(segments, commands)
         bounds = design_bounds(segments, commands)
         if write_outputs or self.state is None:
             if working_source.suffix.lower() == ".pes":
@@ -1652,6 +1654,7 @@ class OpenStitchWindow(QMainWindow):
         counts["trims"] = sum(1 for command in new_commands if command.get("command") == "trim")
         counts["color_changes"] = max(0, len(new_blocks) - 1)
 
+        new_segments, new_commands = normalize_positive_coordinates(new_segments, new_commands)
         bounds = design_bounds(new_segments, new_commands)
         rendered_pes = self.state.pes_path.with_name(f"{self.state.pes_path.stem}_applied_{uuid.uuid4().hex[:10]}.pes")
         previous_source = self.state.source_path
@@ -2052,6 +2055,10 @@ class OpenStitchWindow(QMainWindow):
         counts["stitch_segments"] = counts["needle_points"]
         counts["jumps"] = sum(1 for segment in self.state.segments if segment["kind"] != "stitch")
         self.state.counts = counts
+        self.state.segments, self.state.commands = normalize_positive_coordinates(
+            self.state.segments,
+            self.state.commands,
+        )
         self.state.bounds = design_bounds(self.state.segments, self.state.commands)
         self.refresh_state_view(preserve_view=True)
 
