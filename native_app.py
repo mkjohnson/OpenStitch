@@ -706,6 +706,9 @@ class OpenStitchWindow(QMainWindow):
         form.addRow("Color flattening", self.color_merge)
         form.addRow("PDF page", self.pdf_page)
         layout.addLayout(form)
+        apply_settings = QPushButton("Apply Settings")
+        apply_settings.clicked.connect(self.apply_current_settings)
+        layout.addWidget(apply_settings)
         actions_box = QFrame()
         actions_layout = QVBoxLayout(actions_box)
         actions_layout.setContentsMargins(0, 0, 0, 0)
@@ -957,6 +960,8 @@ class OpenStitchWindow(QMainWindow):
             stitch_perimeter=self.stitch_perimeter.isChecked() if hasattr(self, "stitch_perimeter") else False,
         )
         settings["thread_brand"] = self.selected_thread_brand()
+        if self.state is not None and self.state.settings.get("_preserve_block_filter"):
+            settings["_preserve_block_filter"] = True
         return settings
 
     def selected_thread_brand(self) -> str:
@@ -1145,6 +1150,20 @@ class OpenStitchWindow(QMainWindow):
         except Exception as error:
             QMessageBox.critical(self, "OpenStitch", str(error))
 
+    def apply_current_settings(self) -> None:
+        if self.state is None:
+            QMessageBox.information(self, "OpenStitch", "Open a design first.")
+            return
+        try:
+            self.convert_path(
+                self.state.working_source,
+                self.current_settings(),
+                reset_view=False,
+                write_outputs=False,
+            )
+        except Exception as error:
+            QMessageBox.critical(self, "OpenStitch", str(error))
+
     def open_design(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
             self,
@@ -1198,6 +1217,20 @@ class OpenStitchWindow(QMainWindow):
             working_source = OUTPUT_DIR / f"{Path(name).stem}_{job_id}{Path(name).suffix.lower()}"
             shutil.copy2(source_path, working_source)
         segments, commands, blocks, counts = self.collect_design(working_source, settings)
+        if previous_blocks and settings.get("_preserve_block_filter"):
+            kept_blocks = set(previous_blocks)
+            segments = [segment for segment in segments if segment["blockIndex"] in kept_blocks]
+            commands = [
+                command
+                for command in commands
+                if not isinstance(command.get("color"), int) or command.get("color") in kept_blocks
+            ]
+            blocks = [block for block in blocks if block["index"] in kept_blocks]
+            counts["needle_points"] = sum(1 for segment in segments if segment["kind"] == "stitch")
+            counts["stitch_segments"] = counts["needle_points"]
+            counts["jumps"] = sum(1 for segment in segments if segment["kind"] != "stitch")
+            counts["trims"] = sum(1 for command in commands if command.get("command") == "trim")
+            counts["color_changes"] = max(0, len(blocks) - 1)
         if previous_blocks:
             for block in blocks:
                 previous = previous_blocks.get(block["index"])
@@ -1505,6 +1538,10 @@ class OpenStitchWindow(QMainWindow):
 
         bounds = design_bounds(new_segments, new_commands)
         rendered_pes = self.state.pes_path.with_name(f"{self.state.pes_path.stem}_applied_{uuid.uuid4().hex[:10]}.pes")
+        previous_source = self.state.source_path
+        previous_working_source = self.state.working_source
+        state_settings = dict(self.state.settings)
+        state_settings["_preserve_block_filter"] = True
         written = write_segments_as_pes(
             new_segments,
             new_blocks,
@@ -1514,11 +1551,11 @@ class OpenStitchWindow(QMainWindow):
         )
         thread_metadata_path(rendered_pes).write_text(json.dumps({"blocks": written}, indent=2), encoding="utf-8")
         self.state = DesignState(
-            source_path=rendered_pes,
-            working_source=rendered_pes,
+            source_path=previous_source,
+            working_source=previous_working_source,
             pes_path=rendered_pes,
             project_path=rendered_pes.with_suffix(PROJECT_SUFFIX),
-            settings=self.state.settings,
+            settings=state_settings,
             segments=new_segments,
             commands=new_commands,
             color_blocks=new_blocks,
