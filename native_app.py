@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pyembroidery as embroidery
+from PIL import Image, ImageColor, ImageDraw, ImageFilter
 from PySide6.QtCore import QPoint, QPointF, QRectF, Qt, QTimer
 from PySide6.QtGui import QAction, QColor, QPainter, QPen
 from PySide6.QtWidgets import (
@@ -63,7 +64,7 @@ from pes_viewer import (
 )
 from thread_catalog import available_thread_brands, load_thread_catalog
 from thread_inventory import add_inventory_item, delete_inventory_item, load_inventory, normalize_hex
-from thread_settings import DEFAULT_THREAD_WEIGHT, recommended_fill_spacing
+from thread_settings import DEFAULT_THREAD_WEIGHT, recommended_fill_spacing, thread_diameter_mm
 from viewer_server import project_settings, project_summary_text, safe_name, write_project_file
 from viewer_server import (
     BROTHER_DUETTA_MAX_HEIGHT_MM,
@@ -88,6 +89,82 @@ class DesignState:
     color_blocks: list[dict]
     counts: dict
     bounds: tuple[float, float, float, float]
+
+
+def clamp_channel(value: float) -> int:
+    return max(0, min(255, int(round(value))))
+
+
+def blend_rgb(color: tuple[int, int, int], other: tuple[int, int, int], amount: float) -> tuple[int, int, int]:
+    return tuple(clamp_channel(channel + (other[index] - channel) * amount) for index, channel in enumerate(color))
+
+
+def realistic_preview_image(
+    segments: list[dict],
+    bounds: tuple[float, float, float, float],
+    *,
+    fabric_color: str,
+    thread_weight: str,
+    selected_blocks: set[int] | None = None,
+    max_width_px: int = 2600,
+) -> Image.Image:
+    min_x, min_y, max_x, max_y = bounds
+    design_w = max(max_x - min_x, 1.0)
+    design_h = max(max_y - min_y, 1.0)
+    margin_mm = 8.0
+    scale = min(28.0, max(8.0, max_width_px / (design_w + margin_mm * 2)))
+    width = int(round((design_w + margin_mm * 2) * scale))
+    height = int(round((design_h + margin_mm * 2) * scale))
+    offset_x = (margin_mm - min_x) * scale
+    offset_y = (margin_mm - min_y) * scale
+    fabric_rgb = ImageColor.getrgb(fabric_color if fabric_color.startswith("#") else "#fbfcfa")
+    image = Image.new("RGB", (width, height), fabric_rgb)
+    weave = ImageDraw.Draw(image, "RGBA")
+    light = blend_rgb(fabric_rgb, (255, 255, 255), 0.28)
+    dark = blend_rgb(fabric_rgb, (0, 0, 0), 0.10)
+    spacing = max(3, int(round(scale * 0.35)))
+    for x in range(0, width, spacing):
+        weave.line([(x, 0), (x, height)], fill=(*dark, 26), width=1)
+        if x + 1 < width:
+            weave.line([(x + 1, 0), (x + 1, height)], fill=(*light, 18), width=1)
+    for y in range(0, height, spacing):
+        weave.line([(0, y), (width, y)], fill=(*dark, 20), width=1)
+        if y + 1 < height:
+            weave.line([(0, y + 1), (width, y + 1)], fill=(*light, 16), width=1)
+
+    thread_width = max(2, int(round(thread_diameter_mm(thread_weight) * scale)))
+    shadow = Image.new("RGBA", image.size, (0, 0, 0, 0))
+    shadow_draw = ImageDraw.Draw(shadow, "RGBA")
+    thread_layer = Image.new("RGBA", image.size, (0, 0, 0, 0))
+    thread_draw = ImageDraw.Draw(thread_layer, "RGBA")
+
+    def point(x: float, y: float) -> tuple[float, float]:
+        return x * scale + offset_x, y * scale + offset_y
+
+    for segment in segments:
+        if segment.get("kind") != "stitch":
+            continue
+        if selected_blocks is not None and segment.get("blockIndex") not in selected_blocks:
+            continue
+        start = point(segment["x1"], segment["y1"])
+        end = point(segment["x2"], segment["y2"])
+        color = ImageColor.getrgb(segment.get("color", "#111111"))
+        base = (*color, 238)
+        low = (*blend_rgb(color, (0, 0, 0), 0.32), 210)
+        high = (*blend_rgb(color, (255, 255, 255), 0.42), 180)
+        shadow_draw.line(
+            [(start[0] + thread_width * 0.45, start[1] + thread_width * 0.55), (end[0] + thread_width * 0.45, end[1] + thread_width * 0.55)],
+            fill=(0, 0, 0, 58),
+            width=max(1, thread_width + 2),
+        )
+        thread_draw.line([start, end], fill=low, width=max(1, thread_width + 1))
+        thread_draw.line([start, end], fill=base, width=thread_width)
+        thread_draw.line([start, end], fill=high, width=max(1, thread_width // 3))
+
+    shadow = shadow.filter(ImageFilter.GaussianBlur(radius=max(0.6, thread_width * 0.35)))
+    image = Image.alpha_composite(image.convert("RGBA"), shadow)
+    image = Image.alpha_composite(image, thread_layer)
+    return image.convert("RGB")
 
 
 class StitchCanvas(QWidget):
@@ -529,6 +606,9 @@ class OpenStitchWindow(QMainWindow):
         save_project = QAction("Save Project As...", self)
         save_project.triggered.connect(self.save_project_as)
         file_menu.addAction(save_project)
+        export_preview = QAction("Save Realistic Screenshot...", self)
+        export_preview.triggered.connect(self.export_realistic_preview)
+        file_menu.addAction(export_preview)
         file_menu.addSeparator()
         exit_action = QAction("Exit", self)
         exit_action.triggered.connect(self.close)
@@ -730,12 +810,15 @@ class OpenStitchWindow(QMainWindow):
         save_pes.clicked.connect(self.save_pes_as)
         save_project = QPushButton("Save Project")
         save_project.clicked.connect(self.save_project_as)
+        export_preview = QPushButton("Realistic Screenshot")
+        export_preview.clicked.connect(self.export_realistic_preview)
         email_project = QPushButton("Email Project")
         email_project.clicked.connect(self.email_project)
         actions_layout.addWidget(open_button)
         file_buttons = QHBoxLayout()
         file_buttons.addWidget(save_pes)
         file_buttons.addWidget(save_project)
+        file_buttons.addWidget(export_preview)
         file_buttons.addWidget(email_project)
         actions_layout.addLayout(file_buttons)
         layout.addWidget(actions_box)
@@ -1671,6 +1754,31 @@ class OpenStitchWindow(QMainWindow):
             )
             write_project_file(Path(target), self.state.working_source, self.state.settings, summary)
             Path(target).with_suffix(".summary.txt").write_text(summary, encoding="utf-8")
+            QMessageBox.information(self, "OpenStitch", f"Saved {target}")
+        except Exception as error:
+            QMessageBox.critical(self, "OpenStitch", str(error))
+
+    def export_realistic_preview(self) -> None:
+        if self.state is None:
+            QMessageBox.information(self, "OpenStitch", "Open a design first.")
+            return
+        target, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export realistic preview",
+            str(self.state.pes_path.with_suffix(".realistic.png")),
+            "PNG image (*.png)",
+        )
+        if not target:
+            return
+        try:
+            image = realistic_preview_image(
+                self.state.segments,
+                self.state.bounds,
+                fabric_color=str(self.state.settings.get("fabric_color", "#fbfcfa")),
+                thread_weight=str(self.state.settings.get("thread_weight", DEFAULT_THREAD_WEIGHT)),
+                selected_blocks=self.selected_blocks(),
+            )
+            image.save(target)
             QMessageBox.information(self, "OpenStitch", f"Saved {target}")
         except Exception as error:
             QMessageBox.critical(self, "OpenStitch", str(error))
