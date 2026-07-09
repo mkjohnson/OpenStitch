@@ -3488,6 +3488,7 @@ def write_segments_as_pes(
     min_stitch_mm: float = 0.3,
     lock_stitch_mm: float = 1.0,
     connect_short_gaps: bool = True,
+    max_connect_gap_mm: float = 0.45,
     min_run_length_mm: float = 0.3,
     stitch_perimeter: bool = False,
 ) -> list[dict]:
@@ -3607,7 +3608,7 @@ def write_segments_as_pes(
                 and point_distance(
                     previous_point,
                     (start_units[0] / EMB_UNITS_PER_MM, start_units[1] / EMB_UNITS_PER_MM),
-                ) <= max(max_stitch_mm, 0.1)
+                ) <= max(max_connect_gap_mm, min_stitch_mm)
             ):
                 pattern.add_stitch_absolute(embroidery.STITCH, start_units[0], start_units[1])
                 current_units = start_units
