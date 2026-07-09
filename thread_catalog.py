@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 
+from madeira_threads import MADEIRA_THREADS
+
+
 FLORIANI_THREADS = [
     {"brand": "Floriani", "number": 'PF 1107', "name": 'Shrimp', "color": '#ed4594'},
     {"brand": "Floriani", "number": 'PF 155', "name": 'Martha Washington', "color": '#e6253e'},
@@ -365,5 +368,17 @@ FLORIANI_THREADS = [
 ]
 
 
-def load_thread_catalog() -> list[dict]:
-    return [dict(item) for item in FLORIANI_THREADS]
+THREAD_CATALOGS = {
+    "Floriani": FLORIANI_THREADS,
+    "Madeira": MADEIRA_THREADS,
+}
+
+
+def available_thread_brands() -> list[str]:
+    return list(THREAD_CATALOGS)
+
+
+def load_thread_catalog(brand: str | None = None) -> list[dict]:
+    if brand in THREAD_CATALOGS:
+        return [dict(item) for item in THREAD_CATALOGS[brand]]
+    return [dict(item) for catalog in THREAD_CATALOGS.values() for item in catalog]

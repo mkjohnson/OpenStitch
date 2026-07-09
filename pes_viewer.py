@@ -11,7 +11,7 @@ import pyembroidery as embroidery
 
 from image_digitizer import image_to_segments, is_raster_source, svg_needs_rasterization
 from svg2brother import extract_runs_for_final_size, positive_float, make_thread
-from thread_catalog import load_thread_catalog
+from thread_catalog import available_thread_brands, load_thread_catalog
 from thread_inventory import closest_inventory_match, load_inventory, normalize_hex, rgb_distance
 from thread_settings import (
     DEFAULT_THREAD_WEIGHT,
@@ -746,12 +746,14 @@ def render_inventory_options() -> str:
         options.append(thread_option(item["color"], label))
     if inventory:
         options.append("</optgroup>")
-    if catalog:
-        options.append('<optgroup label="Floriani polyester">')
-    for item in catalog:
-        label = f'{item["brand"]} {item["number"]} {item["name"]} - {item["color"]}'
-        options.append(thread_option(item["color"], label))
-    if catalog:
+    for brand in available_thread_brands():
+        brand_items = [item for item in catalog if item.get("brand") == brand]
+        if not brand_items:
+            continue
+        options.append(f'<optgroup label="{html.escape(brand)}">')
+        for item in brand_items:
+            label = f'{item["brand"]} {item["number"]} {item["name"]} - {item["color"]}'
+            options.append(thread_option(item["color"], label))
         options.append("</optgroup>")
     return "".join(options)
 
@@ -781,7 +783,7 @@ def group_color_blocks_by_inventory(
         elif catalog:
             catalog_match = closest_thread_match(color, catalog)
             assert catalog_match is not None
-            key = ("floriani", catalog_match["number"])
+            key = (catalog_match["brand"], catalog_match["number"])
             display_color = catalog_match["color"]
             label = catalog_label(catalog_match)
         else:
@@ -872,7 +874,7 @@ def render_thread_plan(color_blocks: list[dict], usage_by_block: dict[int, float
         total_meters += meters
         match = closest_inventory_match(color, inventory)
         catalog_match = closest_thread_match(color, catalog)
-        catalog_detail = "No Floriani catalog colors loaded."
+        catalog_detail = "No known catalog colors loaded."
         if catalog_match is not None:
             catalog_distance = rgb_distance(color, catalog_match["color"])
             catalog_detail = (
@@ -910,7 +912,7 @@ def render_thread_plan(color_blocks: list[dict], usage_by_block: dict[int, float
             if not close_enough:
                 needed.append(color)
                 if catalog_match is not None:
-                    detail += f"<br>Buy closest Floriani: {catalog_detail}"
+                    detail += f"<br>Buy closest known thread: {catalog_detail}"
                     key = catalog_match["number"]
                     shopping.setdefault(
                         key,
@@ -961,7 +963,7 @@ def render_thread_plan(color_blocks: list[dict], usage_by_block: dict[int, float
         '<section class="thread-plan">'
         '<h2>Thread Planning</h2>'
         f'<p>{html.escape(summary)}</p>'
-        '<table><thead><tr><th>Design color</th><th>Use</th><th>Status</th><th>Closest inventory match</th><th>Closest Floriani</th></tr></thead>'
+        '<table><thead><tr><th>Design color</th><th>Use</th><th>Status</th><th>Closest inventory match</th><th>Closest known thread</th></tr></thead>'
         f'<tbody>{"".join(rows)}</tbody></table>'
         f'{shopping_html}'
         '<a class="inventory-link" href="/inventory">Edit Thread Inventory</a>'
@@ -2248,7 +2250,6 @@ def render_html(
             group: option.parentElement && option.parentElement.tagName === "OPTGROUP" ? option.parentElement.label : "",
           }}))
       : [];
-    const florianiThreadOptions = knownThreadOptions.filter((option) => option.group === "Floriani polyester");
     let selectedBlocks = new Set(blockToggles.map((toggle) => Number(toggle.value)));
     const maxStep = {max_step};
     const initialViewBox = JSON.parse(toolpath.dataset.initialViewbox);
@@ -2699,12 +2700,12 @@ def render_html(
         const color = palette[blockIndex];
         const inventoryMatch = closestThreadOption(color, inventoryOptions);
         if (inventoryMatch && inventoryMatch.distance <= 64) continue;
-        const florianiMatch = closestThreadOption(color, florianiThreadOptions);
-        if (!florianiMatch) continue;
-        const label = cleanThreadLabel(florianiMatch.label);
+        const catalogMatch = closestThreadOption(color, knownThreadOptions);
+        if (!catalogMatch) continue;
+        const label = cleanThreadLabel(catalogMatch.label);
         const existing = shopping.get(label) || {{
           label,
-          color: florianiMatch.value,
+          color: catalogMatch.value,
           meters: 0,
           designColors: new Set(),
         }};

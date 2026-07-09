@@ -60,7 +60,7 @@ from pes_viewer import (
     thread_metadata_path,
     write_segments_as_pes,
 )
-from thread_catalog import load_thread_catalog
+from thread_catalog import available_thread_brands, load_thread_catalog
 from thread_inventory import add_inventory_item, delete_inventory_item, load_inventory, normalize_hex
 from thread_settings import DEFAULT_THREAD_WEIGHT, recommended_fill_spacing
 from viewer_server import project_settings, project_summary_text, safe_name, write_project_file
@@ -675,6 +675,14 @@ class OpenStitchWindow(QMainWindow):
         panel = QWidget()
         layout = QVBoxLayout(panel)
         layout.addWidget(QLabel("Threads"))
+        brand_row = QHBoxLayout()
+        brand_row.addWidget(QLabel("Match brand"))
+        self.thread_brand = QComboBox()
+        for brand in available_thread_brands():
+            self.thread_brand.addItem(brand, brand)
+        self.thread_brand.currentIndexChanged.connect(self.thread_brand_changed)
+        brand_row.addWidget(self.thread_brand, 1)
+        layout.addLayout(brand_row)
         self.thread_container = QWidget()
         self.thread_layout = QVBoxLayout(self.thread_container)
         self.thread_layout.addStretch(1)
@@ -806,7 +814,7 @@ class OpenStitchWindow(QMainWindow):
         self.restore_snapshot(self.undo_stack.pop())
 
     def current_settings(self) -> dict:
-        return project_settings(
+        settings = project_settings(
             fit_width=self.fit_width.value(),
             fill_spacing=self.fill_spacing.value(),
             thread_weight=DEFAULT_THREAD_WEIGHT,
@@ -820,6 +828,25 @@ class OpenStitchWindow(QMainWindow):
             fabric_color=self.fabric_color_input.text().strip() if hasattr(self, "fabric_color_input") else "#fbfcfa",
             stitch_perimeter=self.stitch_perimeter.isChecked() if hasattr(self, "stitch_perimeter") else False,
         )
+        settings["thread_brand"] = self.selected_thread_brand()
+        return settings
+
+    def selected_thread_brand(self) -> str:
+        if hasattr(self, "thread_brand"):
+            brand = self.thread_brand.currentData()
+            if brand:
+                return str(brand)
+        return "Floriani"
+
+    def selected_catalog(self) -> list[dict]:
+        return [item for item in self.catalog if item.get("brand") == self.selected_thread_brand()]
+
+    def thread_brand_changed(self, *args) -> None:
+        if self.state is not None:
+            self.state.settings["thread_brand"] = self.selected_thread_brand()
+        self.populate_threads()
+        self.update_stats()
+        self.update_shopping_list()
 
     def apply_settings_to_controls(self, settings: dict) -> None:
         self._loading_settings = True
@@ -846,6 +873,10 @@ class OpenStitchWindow(QMainWindow):
                 self.update_view_settings()
             if hasattr(self, "stitch_perimeter"):
                 self.stitch_perimeter.setChecked(bool(settings.get("stitch_perimeter", False)))
+            if hasattr(self, "thread_brand"):
+                index = self.thread_brand.findData(str(settings.get("thread_brand", "Floriani")))
+                if index >= 0:
+                    self.thread_brand.setCurrentIndex(index)
         finally:
             self._loading_settings = False
 
@@ -1223,8 +1254,9 @@ class OpenStitchWindow(QMainWindow):
         self.thread_rows = []
         if self.state is None:
             return
+        catalog = self.selected_catalog()
         for block in self.state.color_blocks:
-            row = ThreadRow(block, self.catalog, self.thread_changed)
+            row = ThreadRow(block, catalog, self.thread_changed)
             self.thread_rows.append(row)
             self.thread_layout.insertWidget(self.thread_layout.count() - 1, row)
         self.canvas.set_visible_blocks(self.selected_blocks())
@@ -1447,7 +1479,7 @@ class OpenStitchWindow(QMainWindow):
         if self.state is None:
             return "Thread shopping list\n\nNo design loaded.\n"
         usage = estimate_thread_usage(self.state.segments)
-        catalog = self.catalog
+        catalog = self.selected_catalog()
         inventory = load_inventory()
         lines = ["Shopping list"]
         for row in self.thread_rows:

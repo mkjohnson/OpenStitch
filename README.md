@@ -58,7 +58,7 @@ The app provides:
 - Project save/load using `.embdproj` files.
 - Color-block toggles and color edits before saving a filtered PES.
 - A library tab for recent generated PES and project files.
-- Thread usage estimates and Floriani shopping-list suggestions.
+- Thread usage estimates and Floriani/Madeira shopping-list suggestions.
 
 The older browser-based app is still available for comparison:
 
