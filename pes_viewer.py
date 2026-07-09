@@ -602,7 +602,7 @@ def add_perimeter_segments(
             for segment in segments
             if segment.get("kind") == "stitch" and segment.get("blockIndex") == block_index
         ]
-        for loop in stitched_boundary_loops(block_segments):
+        for perimeter_index, loop in enumerate(stitched_boundary_loops(block_segments)):
             for start, end in zip(loop, loop[1:]):
                 last = start
                 for point in split_long_point_span(start, end, max_stitch_mm):
@@ -619,6 +619,7 @@ def add_perimeter_segments(
                         "blockIndex": block_index,
                         "step": next_step,
                         "perimeter": True,
+                        "perimeterLoop": perimeter_index,
                     }
                 )
                     last = point
@@ -3613,7 +3614,11 @@ def write_segments_as_pes(
                 pattern.add_stitch_absolute(embroidery.STITCH, start_units[0], start_units[1])
                 current_units = start_units
             elif previous_point is None:
-                pattern.add_stitch_absolute(embroidery.STITCH, start_units[0], start_units[1])
+                if old_active_block is None:
+                    pattern.add_stitch_absolute(embroidery.STITCH, start_units[0], start_units[1])
+                else:
+                    pattern.add_stitch_absolute(embroidery.JUMP, start_units[0], start_units[1])
+                    pattern.add_stitch_absolute(embroidery.STITCH, start_units[0], start_units[1])
                 current_units = start_units
             else:
                 pattern.add_stitch_absolute(embroidery.JUMP, start_units[0], start_units[1])
@@ -3635,28 +3640,34 @@ def write_segments_as_pes(
     def write_segment_sequence(sequence: list[dict]) -> None:
         current_block: int | None = None
         current_perimeter = False
+        current_perimeter_loop: int | None = None
         run_points: list[tuple[float, float]] = []
 
         def flush() -> None:
-            nonlocal run_points
+            nonlocal run_points, previous_point
             if current_block is not None and run_points:
                 write_run(current_block, run_points, current_perimeter)
+                if current_perimeter:
+                    previous_point = None
             run_points = []
 
         for segment in sequence:
             nonlocal_current_perimeter = bool(segment.get("perimeter"))
+            nonlocal_perimeter_loop = segment.get("perimeterLoop") if nonlocal_current_perimeter else None
             block_index = segment["blockIndex"]
             start = (segment["x1"], segment["y1"])
             end = (segment["x2"], segment["y2"])
             if (
                 current_block != block_index
                 or current_perimeter != nonlocal_current_perimeter
+                or current_perimeter_loop != nonlocal_perimeter_loop
                 or not run_points
                 or not points_match(run_points[-1], start)
             ):
                 flush()
                 current_block = block_index
                 current_perimeter = nonlocal_current_perimeter
+                current_perimeter_loop = nonlocal_perimeter_loop
                 run_points = [start, end]
             else:
                 run_points.append(end)
