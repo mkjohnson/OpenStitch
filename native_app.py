@@ -1128,10 +1128,17 @@ class OpenStitchWindow(QMainWindow):
     def refresh_current_design(self) -> None:
         if self.state is None:
             return
+        settings = self.current_settings()
+        if self.state.working_source.suffix.lower() in {".pes", ".dst", ".exp"}:
+            self.state.settings = settings
+            self.update_stats()
+            self.update_color_block_preview()
+            self.update_shopping_list()
+            return
         try:
             self.convert_path(
                 self.state.working_source,
-                self.current_settings(),
+                settings,
                 reset_view=False,
                 write_outputs=False,
             )
