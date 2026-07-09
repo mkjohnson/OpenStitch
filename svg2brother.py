@@ -93,8 +93,13 @@ def to_mm(points_px: Iterable[tuple[float, float]]) -> list[tuple[float, float]]
     return [(x / SVG_PX_PER_MM, y / SVG_PX_PER_MM) for x, y in points_px]
 
 
+MIN_FILL_STITCH_MM = 0.5
+
+
 def split_long_stitches(
-    points: Iterable[tuple[float, float]], max_stitch_mm: float
+    points: Iterable[tuple[float, float]],
+    max_stitch_mm: float,
+    min_stitch_mm: float = 0.0,
 ) -> list[tuple[float, float]]:
     source = list(points)
     if len(source) < 2:
@@ -102,6 +107,8 @@ def split_long_stitches(
     result = [source[0]]
     for start, end in zip(source, source[1:]):
         span = distance(start, end)
+        if 0 < span < min_stitch_mm:
+            continue
         steps = max(1, int(math.ceil(span / max(max_stitch_mm, 0.1))))
         for i in range(1, steps + 1):
             t = i / steps
@@ -139,6 +146,7 @@ def hatch_compound_fill(
     spacing_mm: float,
     max_stitch_mm: float,
     fill_angle_deg: float = 0.0,
+    min_stitch_mm: float = MIN_FILL_STITCH_MM,
 ) -> list[list[tuple[float, float]]]:
     closed_polygons: list[list[tuple[float, float]]] = []
     for polygon in polygons:
@@ -181,18 +189,218 @@ def hatch_compound_fill(
 
         xs.sort()
         for left, right in zip(xs[0::2], xs[1::2]):
-            if right - left <= 0.01:
+            if right - left < min_stitch_mm:
                 continue
             run = [(left, y), (right, y)]
             if row_index % 2:
                 run.reverse()
-            row = split_long_stitches(run, max_stitch_mm)
+            row = split_long_stitches(run, max_stitch_mm, min_stitch_mm=min_stitch_mm)
+            if len(row) < 2:
+                continue
             if abs(angle_rad) > 1e-6:
                 row = [rotate_point(point, angle_rad, origin) for point in row]
             rows.append(row)
             row_index += 1
         y += max(spacing_mm, 0.1)
 
+    return rows
+
+
+def stitch_micro_score(
+    runs: Iterable[list[tuple[float, float]]],
+    min_stitch_mm: float = MIN_FILL_STITCH_MM,
+) -> tuple[int, float, int]:
+    short_count = 0
+    deficit = 0.0
+    stitch_count = 0
+    for run in runs:
+        for start, end in zip(run, run[1:]):
+            span = distance(start, end)
+            if span <= 0:
+                continue
+            stitch_count += 1
+            if span < min_stitch_mm:
+                short_count += 1
+                deficit += min_stitch_mm - span
+    return short_count, deficit, stitch_count
+
+
+def simplify_contour_points(
+    points: list[tuple[float, float]],
+    min_stitch_mm: float = MIN_FILL_STITCH_MM,
+) -> list[tuple[float, float]]:
+    if len(points) < 2:
+        return points
+    closed = distance(points[0], points[-1]) <= 0.01
+    source = points[:-1] if closed else points
+    simplified = [source[0]]
+    for point in source[1:]:
+        if distance(simplified[-1], point) >= min_stitch_mm:
+            simplified.append(point)
+    if len(simplified) >= 2 and closed:
+        if distance(simplified[-1], simplified[0]) >= min_stitch_mm:
+            simplified.append(simplified[0])
+        else:
+            simplified[-1] = simplified[0]
+    return simplified
+
+
+def fill_angle_candidates(fill_angle_deg: float) -> list[float]:
+    seen: set[float] = set()
+    candidates: list[float] = []
+    for offset in (0, -5, 5, -10, 10, -15, 15, -22.5, 22.5, -30, 30, -45, 45, 90):
+        angle = ((fill_angle_deg + offset + 90) % 180) - 90
+        rounded = round(angle, 3)
+        if rounded not in seen:
+            seen.add(rounded)
+            candidates.append(angle)
+    return candidates
+
+
+def optimized_hatch_compound_fill(
+    polygons: Iterable[list[tuple[float, float]]],
+    spacing_mm: float,
+    max_stitch_mm: float,
+    fill_angle_deg: float,
+    min_stitch_mm: float = MIN_FILL_STITCH_MM,
+) -> list[list[tuple[float, float]]]:
+    polygon_list = [polygon for polygon in polygons if len(polygon) >= 3]
+    if not polygon_list:
+        return []
+    best_rows: list[list[tuple[float, float]]] | None = None
+    best_score: tuple[int, float, int, float] | None = None
+    for angle in fill_angle_candidates(fill_angle_deg):
+        rows = hatch_compound_fill(
+            polygon_list,
+            spacing_mm,
+            max_stitch_mm,
+            angle,
+            min_stitch_mm=min_stitch_mm,
+        )
+        short_count, deficit, stitch_count = stitch_micro_score(rows, min_stitch_mm)
+        score = (short_count, round(deficit, 4), -stitch_count, abs(angle - fill_angle_deg))
+        if best_score is None or score < best_score:
+            best_rows = rows
+            best_score = score
+    return best_rows or []
+
+
+def mixed_hatch_compound_fill(
+    polygons: Iterable[list[tuple[float, float]]],
+    spacing_mm: float,
+    max_stitch_mm: float,
+    fill_angle_deg: float,
+    min_stitch_mm: float = MIN_FILL_STITCH_MM,
+) -> list[list[tuple[float, float]]]:
+    polygon_list = [polygon for polygon in polygons if len(polygon) >= 3]
+    if not polygon_list:
+        return []
+    plans: list[tuple[str, list[list[tuple[float, float]]]]] = [
+        (
+            "tatami",
+            optimized_hatch_compound_fill(
+                polygon_list,
+                spacing_mm,
+                max_stitch_mm,
+                fill_angle_deg,
+                min_stitch_mm=min_stitch_mm,
+            ),
+        ),
+        (
+            "horizontal",
+            hatch_compound_fill(
+                polygon_list,
+                spacing_mm,
+                max_stitch_mm,
+                0.0,
+                min_stitch_mm=min_stitch_mm,
+            ),
+        ),
+    ]
+    crosshatch_rows = optimized_hatch_compound_fill(
+        polygon_list,
+        spacing_mm * 1.4,
+        max_stitch_mm,
+        fill_angle_deg,
+        min_stitch_mm=min_stitch_mm,
+    )
+    crosshatch_rows.extend(
+        optimized_hatch_compound_fill(
+            polygon_list,
+            spacing_mm * 1.4,
+            max_stitch_mm,
+            -fill_angle_deg if abs(fill_angle_deg) > 0.001 else 90.0,
+            min_stitch_mm=min_stitch_mm,
+        )
+    )
+    plans.append(("crosshatch", crosshatch_rows))
+
+    best_rows: list[list[tuple[float, float]]] | None = None
+    best_score: tuple[int, float, int, int] | None = None
+    for plan_index, (_, rows) in enumerate(plans):
+        short_count, deficit, stitch_count = stitch_micro_score(rows, min_stitch_mm)
+        score = (short_count, round(deficit, 4), stitch_count, plan_index)
+        if best_score is None or score < best_score:
+            best_score = score
+            best_rows = rows
+    return best_rows or []
+
+
+def polygon_centroid(polygon: list[tuple[float, float]]) -> tuple[float, float]:
+    if not polygon:
+        return 0.0, 0.0
+    signed_area = 0.0
+    cx = 0.0
+    cy = 0.0
+    for (x1, y1), (x2, y2) in zip(polygon, polygon[1:]):
+        cross = (x1 * y2) - (x2 * y1)
+        signed_area += cross
+        cx += (x1 + x2) * cross
+        cy += (y1 + y2) * cross
+    if abs(signed_area) < 1e-9:
+        return (
+            sum(x for x, _ in polygon) / len(polygon),
+            sum(y for _, y in polygon) / len(polygon),
+        )
+    signed_area *= 0.5
+    return cx / (6.0 * signed_area), cy / (6.0 * signed_area)
+
+
+def contour_compound_fill(
+    polygons: Iterable[list[tuple[float, float]]],
+    spacing_mm: float,
+    max_stitch_mm: float,
+    min_stitch_mm: float = MIN_FILL_STITCH_MM,
+) -> list[list[tuple[float, float]]]:
+    rows: list[list[tuple[float, float]]] = []
+    for polygon in polygons:
+        if len(polygon) < 3:
+            continue
+        if distance(polygon[0], polygon[-1]) > 0.01:
+            polygon = [*polygon, polygon[0]]
+        center = polygon_centroid(polygon)
+        max_radius = max(distance(center, point) for point in polygon)
+        if max_radius < min_stitch_mm:
+            continue
+        layer = 0
+        offset = 0.0
+        while offset < max_radius - min_stitch_mm:
+            scale = max(0.05, 1.0 - (offset / max_radius))
+            contour = [
+                (
+                    center[0] + (point[0] - center[0]) * scale,
+                    center[1] + (point[1] - center[1]) * scale,
+                )
+                for point in polygon
+            ]
+            contour = simplify_contour_points(contour, min_stitch_mm=min_stitch_mm)
+            contour = split_long_stitches(contour, max_stitch_mm, min_stitch_mm=min_stitch_mm)
+            if len(contour) >= 2:
+                if layer % 2:
+                    contour.reverse()
+                rows.append(contour)
+            offset += max(spacing_mm, min_stitch_mm)
+            layer += 1
     return rows
 
 
@@ -203,11 +411,12 @@ def extract_runs(
     max_stitch_mm: float,
     fill_angle_deg: float = 0.0,
     fill_mode: str = "tatami",
+    min_stitch_mm: float = MIN_FILL_STITCH_MM,
 ) -> list[StitchRun]:
     svg = SVG.parse(str(svg_file), reify=True)
     sample_step_px = sample_step_mm * SVG_PX_PER_MM
     fill_mode = fill_mode.lower().strip()
-    if fill_mode not in {"horizontal", "tatami", "crosshatch"}:
+    if fill_mode not in {"horizontal", "tatami", "crosshatch", "mixed", "outline", "contour"}:
         fill_mode = "tatami"
     fill_angles = [0.0] if fill_mode == "horizontal" else [fill_angle_deg]
     if fill_mode == "crosshatch":
@@ -230,22 +439,48 @@ def extract_runs(
             continue
 
         subpaths_mm = [to_mm(subpath_px) for subpath_px in flatten_path(path, sample_step_px)]
-        if filled:
+        if filled and fill_mode not in {"outline", "contour"}:
             fill_polygons = [subpath_mm for subpath_mm in subpaths_mm if len(subpath_mm) >= 3]
-            for angle in fill_angles:
-                for row in hatch_compound_fill(
+            if fill_mode == "mixed":
+                fill_rows = mixed_hatch_compound_fill(
                     fill_polygons,
                     fill_spacing_mm,
                     max_stitch_mm,
-                    angle,
-                ):
+                    fill_angle_deg,
+                    min_stitch_mm=min_stitch_mm,
+                )
+                for row in fill_rows:
                     runs.append(StitchRun(color=color, points_mm=row))
+            else:
+                for angle in fill_angles:
+                    fill_rows = optimized_hatch_compound_fill(
+                        fill_polygons,
+                        fill_spacing_mm,
+                        max_stitch_mm,
+                        angle,
+                        min_stitch_mm=min_stitch_mm,
+                    )
+                    for row in fill_rows:
+                        runs.append(StitchRun(color=color, points_mm=row))
+        elif filled and fill_mode == "contour":
+            fill_polygons = [subpath_mm for subpath_mm in subpaths_mm if len(subpath_mm) >= 3]
+            for row in contour_compound_fill(
+                fill_polygons,
+                fill_spacing_mm,
+                max_stitch_mm,
+                min_stitch_mm=min_stitch_mm,
+            ):
+                runs.append(StitchRun(color=color, points_mm=row))
         else:
             for subpath_mm in subpaths_mm:
                 runs.append(
                     StitchRun(
                         color=color,
-                        points_mm=split_long_stitches(subpath_mm, max_stitch_mm),
+                        points_mm=split_long_stitches(
+                            subpath_mm,
+                            max_stitch_mm,
+                            min_stitch_mm=min_stitch_mm,
+                        ),
                     )
                 )
 
@@ -313,6 +548,7 @@ def extract_runs_for_final_size(
         max_stitch_mm=max_stitch_mm,
         fill_angle_deg=fill_angle_deg,
         fill_mode=fill_mode,
+        min_stitch_mm=MIN_FILL_STITCH_MM,
     )
     min_x, min_y, max_x, max_y = bounds(runs)
     width = max(max_x - min_x, 0.001)
@@ -333,6 +569,7 @@ def extract_runs_for_final_size(
             max_stitch_mm=max(max_stitch_mm / scale, 0.1),
             fill_angle_deg=fill_angle_deg,
             fill_mode=fill_mode,
+            min_stitch_mm=max(MIN_FILL_STITCH_MM / scale, 0.01),
         )
     return transform_runs(
         runs,
@@ -435,7 +672,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--fill-mode",
-        choices=("tatami", "horizontal", "crosshatch"),
+        choices=("mixed", "contour", "tatami", "horizontal", "crosshatch", "outline"),
         default="tatami",
         help="Fill style for filled SVG shapes; default: tatami",
     )

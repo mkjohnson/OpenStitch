@@ -37,6 +37,26 @@
             <input name="design" type="file" accept=".embdproj,.svg,.pes,.jpg,.jpeg,.png,.pdf,image/svg+xml,image/jpeg,image/png,application/pdf" required>
           </label>
           <p class="hint">Supported files: OpenStitch projects, SVG, PES, JPG, JPEG, PNG, and PDF.</p>
+          <section class="form-section" aria-label="Application settings">
+            <h2>Settings</h2>
+            <div class="field-grid">
+              <label>
+                Units
+                <select name="display_units" data-units-select>
+                  <option value="metric" selected>Metric (mm)</option>
+                  <option value="sae">SAE (inches)</option>
+                </select>
+              </label>
+              <label>
+                Preview fabric color
+                <input name="fabric_color" type="color" value="#fbfcfa" data-fabric-color>
+              </label>
+              <label class="checkbox-label">
+                <input name="stitch_perimeter" type="checkbox" value="1">
+                Stitch perimeter of each color block
+              </label>
+            </div>
+          </section>
           <div class="field-grid">
             <label>
               Thread weight
@@ -47,23 +67,26 @@
               </select>
             </label>
             <label>
-              Fit width, mm
-              <input name="fit_width_mm" type="number" min="1" step="0.1" value="90">
+              <span data-unit-label="Fit width">Fit width, mm</span>
+              <input name="fit_width_mm" type="number" min="1" step="0.1" value="90" data-mm-field>
             </label>
             <label>
-              Fill spacing, mm
-              <input name="fill_spacing_mm" type="number" min="0.1" max="2" step="0.05" value="0.20" data-fill-spacing>
+              <span data-unit-label="Fill spacing">Fill spacing, mm</span>
+              <input name="fill_spacing_mm" type="number" min="0.1" max="2" step="0.05" value="0.20" data-fill-spacing data-mm-field>
             </label>
             <label>
-              Max stitch length, mm
-              <input name="max_stitch_mm" type="number" min="0.5" max="7" step="0.1" value="3.0">
+              <span data-unit-label="Max stitch length">Max stitch length, mm</span>
+              <input name="max_stitch_mm" type="number" min="0.5" max="7" step="0.1" value="3.0" data-mm-field>
             </label>
             <label>
               Fill mode
               <select name="fill_mode">
-                <option value="tatami" selected>Tatami</option>
+                <option value="mixed" selected>Mixed</option>
+                <option value="contour">Contour</option>
+                <option value="tatami">Tatami</option>
                 <option value="crosshatch">Crosshatch</option>
                 <option value="horizontal">Horizontal</option>
+                <option value="outline">Outline</option>
               </select>
             </label>
             <label>

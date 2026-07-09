@@ -4,6 +4,7 @@ import argparse
 import html
 import json
 import math
+import re
 from pathlib import Path
 
 import pyembroidery as embroidery
@@ -281,6 +282,73 @@ def estimate_stitch_time(counts: dict, color_blocks: list[dict]) -> str:
     return f"{seconds} sec"
 
 
+def classify_fill_types(segments: list[dict], color_blocks: list[dict]) -> dict:
+    by_block: dict[int, list[tuple[float, float]]] = {}
+    for segment in segments:
+        if segment["kind"] != "stitch":
+            continue
+        length = math.hypot(segment["x2"] - segment["x1"], segment["y2"] - segment["y1"])
+        if length <= 0.05:
+            continue
+        angle = (math.degrees(math.atan2(segment["y2"] - segment["y1"], segment["x2"] - segment["x1"])) + 180) % 180
+        by_block.setdefault(segment["blockIndex"], []).append((length, angle))
+
+    block_types: list[dict] = []
+    type_counts: dict[str, int] = {}
+    for block in color_blocks:
+        values = by_block.get(block["index"], [])
+        if not values:
+            fill_type = "No stitches"
+            confidence = "low"
+        else:
+            lengths = [value[0] for value in values]
+            median_length = sorted(lengths)[len(lengths) // 2]
+            long_ratio = sum(1 for length in lengths if length >= 3.0) / len(lengths)
+            short_ratio = sum(1 for length in lengths if length < 0.8) / len(lengths)
+            bins: dict[int, int] = {}
+            for _, angle in values:
+                key = int(round(angle / 10.0) * 10) % 180
+                bins[key] = bins.get(key, 0) + 1
+            dominant_ratio = max(bins.values()) / len(values)
+            active_bins = sum(1 for count in bins.values() if count / len(values) >= 0.05)
+
+            if median_length >= 2.2 and dominant_ratio >= 0.55:
+                fill_type = "Satin"
+                confidence = "high"
+            elif median_length >= 2.4 and long_ratio >= 0.25 and active_bins >= 4:
+                fill_type = "Mixed satin/fill"
+                confidence = "medium"
+            elif median_length <= 1.2 and short_ratio >= 0.35 and active_bins <= 3:
+                fill_type = "Running stitch"
+                confidence = "medium"
+            elif active_bins >= 4 or dominant_ratio < 0.45:
+                fill_type = "Tatami fill"
+                confidence = "high"
+            else:
+                fill_type = "Fill"
+                confidence = "medium"
+
+        type_counts[fill_type] = type_counts.get(fill_type, 0) + 1
+        block_types.append(
+            {
+                "block": block["index"],
+                "label": block.get("label", block.get("color", "")),
+                "color": block.get("color", ""),
+                "fill_type": fill_type,
+                "confidence": confidence,
+            }
+        )
+
+    if not type_counts:
+        summary = "Unknown"
+    elif len(type_counts) == 1:
+        summary = next(iter(type_counts))
+    else:
+        ordered = sorted(type_counts.items(), key=lambda item: (-item[1], item[0]))
+        summary = "Mixed: " + ", ".join(f"{name} ({count})" for name, count in ordered)
+    return {"summary": summary, "blocks": block_types}
+
+
 def render_density_warning(thread_weight: str, fill_spacing_mm: float) -> str:
     minimum = minimum_fill_spacing(thread_weight)
     if fill_spacing_mm >= minimum:
@@ -325,12 +393,254 @@ def split_long_point_span(
     ]
 
 
+def simplify_perimeter_loop(loop: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    if len(loop) < 4:
+        return loop
+    simplified: list[tuple[float, float]] = []
+    for point in loop:
+        simplified.append(point)
+        while len(simplified) >= 3:
+            a, b, c = simplified[-3], simplified[-2], simplified[-1]
+            ab = (round(b[0] - a[0], 6), round(b[1] - a[1], 6))
+            bc = (round(c[0] - b[0], 6), round(c[1] - b[1], 6))
+            if ab == bc:
+                simplified.pop(-2)
+            else:
+                break
+    return simplified
+
+
+def perpendicular_distance(
+    point: tuple[float, float],
+    start: tuple[float, float],
+    end: tuple[float, float],
+) -> float:
+    dx = end[0] - start[0]
+    dy = end[1] - start[1]
+    if dx == 0 and dy == 0:
+        return point_distance(point, start)
+    return abs(dy * point[0] - dx * point[1] + end[0] * start[1] - end[1] * start[0]) / math.hypot(dx, dy)
+
+
+def rdp_simplify(points: list[tuple[float, float]], tolerance: float) -> list[tuple[float, float]]:
+    if len(points) <= 2:
+        return points
+    max_distance = 0.0
+    split_index = 0
+    for index in range(1, len(points) - 1):
+        distance = perpendicular_distance(points[index], points[0], points[-1])
+        if distance > max_distance:
+            max_distance = distance
+            split_index = index
+    if max_distance <= tolerance:
+        return [points[0], points[-1]]
+    left = rdp_simplify(points[: split_index + 1], tolerance)
+    right = rdp_simplify(points[split_index:], tolerance)
+    return [*left[:-1], *right]
+
+
+def simplify_closed_loop(loop: list[tuple[float, float]], tolerance: float) -> list[tuple[float, float]]:
+    if len(loop) < 4:
+        return loop
+    closed = [*loop, loop[0]]
+    simplified = rdp_simplify(closed, tolerance)
+    if simplified and points_match(simplified[0], simplified[-1], tolerance=0.001):
+        simplified = simplified[:-1]
+    return simplify_perimeter_loop(simplified)
+
+
+def stitched_boundary_loops(
+    block_segments: list[dict],
+    *,
+    cell_mm: float = 0.18,
+    min_loop_length_mm: float = 0.0,
+) -> list[list[tuple[float, float]]]:
+    if not block_segments:
+        return []
+    min_x = min(min(segment["x1"], segment["x2"]) for segment in block_segments) - cell_mm * 2
+    min_y = min(min(segment["y1"], segment["y2"]) for segment in block_segments) - cell_mm * 2
+    occupied: set[tuple[int, int]] = set()
+
+    def mark_cell(x: float, y: float) -> None:
+        cx = int(math.floor((x - min_x) / cell_mm))
+        cy = int(math.floor((y - min_y) / cell_mm))
+        occupied.add((cx, cy))
+
+    for segment in block_segments:
+        start = (segment["x1"], segment["y1"])
+        end = (segment["x2"], segment["y2"])
+        distance = max(point_distance(start, end), cell_mm)
+        steps = max(1, int(math.ceil(distance / (cell_mm * 0.5))))
+        for step in range(steps + 1):
+            t = step / steps
+            mark_cell(start[0] + (end[0] - start[0]) * t, start[1] + (end[1] - start[1]) * t)
+
+    def disk_offsets(radius: int) -> list[tuple[int, int]]:
+        return [
+            (ox, oy)
+            for oy in range(-radius, radius + 1)
+            for ox in range(-radius, radius + 1)
+            if ox * ox + oy * oy <= radius * radius
+        ]
+
+    def dilate(cells: set[tuple[int, int]], radius: int) -> set[tuple[int, int]]:
+        offsets = disk_offsets(radius)
+        return {
+            (cx + ox, cy + oy)
+            for cx, cy in cells
+            for ox, oy in offsets
+        }
+
+    def erode(cells: set[tuple[int, int]], radius: int) -> set[tuple[int, int]]:
+        if not cells:
+            return set()
+        offsets = disk_offsets(radius)
+        min_cx = min(cx for cx, _ in cells) - radius
+        max_cx = max(cx for cx, _ in cells) + radius
+        min_cy = min(cy for _, cy in cells) - radius
+        max_cy = max(cy for _, cy in cells) + radius
+        return {
+            (cx, cy)
+            for cy in range(min_cy, max_cy + 1)
+            for cx in range(min_cx, max_cx + 1)
+            if all((cx + ox, cy + oy) in cells for ox, oy in offsets)
+        }
+
+    close_radius = max(1, int(math.ceil(0.24 / cell_mm)))
+    occupied = erode(dilate(occupied, close_radius), close_radius)
+    if not occupied:
+        return []
+    edges: set[tuple[tuple[int, int], tuple[int, int]]] = set()
+
+    def add_edge(a: tuple[int, int], b: tuple[int, int]) -> None:
+        edges.add((a, b) if a <= b else (b, a))
+
+    for cx, cy in occupied:
+        if (cx, cy - 1) not in occupied:
+            add_edge((cx, cy), (cx + 1, cy))
+        if (cx, cy + 1) not in occupied:
+            add_edge((cx, cy + 1), (cx + 1, cy + 1))
+        if (cx - 1, cy) not in occupied:
+            add_edge((cx, cy), (cx, cy + 1))
+        if (cx + 1, cy) not in occupied:
+            add_edge((cx + 1, cy), (cx + 1, cy + 1))
+
+    adjacency: dict[tuple[int, int], set[tuple[int, int]]] = {}
+    for a, b in edges:
+        adjacency.setdefault(a, set()).add(b)
+        adjacency.setdefault(b, set()).add(a)
+
+    paths: list[list[tuple[float, float]]] = []
+
+    def edge_key(a: tuple[int, int], b: tuple[int, int]) -> tuple[tuple[int, int], tuple[int, int]]:
+        return (a, b) if a <= b else (b, a)
+
+    def pop_edge_from(vertex: tuple[int, int]) -> tuple[int, int] | None:
+        candidates = [
+            neighbor
+            for neighbor in adjacency.get(vertex, set())
+            if edge_key(vertex, neighbor) in edges
+        ]
+        if not candidates:
+            return None
+        candidates.sort(key=lambda item: (item[1], item[0]))
+        neighbor = candidates[0]
+        edges.remove(edge_key(vertex, neighbor))
+        return neighbor
+
+    while edges:
+        endpoints = [
+            vertex
+            for vertex, neighbors in adjacency.items()
+            if sum(1 for neighbor in neighbors if edge_key(vertex, neighbor) in edges) == 1
+        ]
+        start = min(endpoints) if endpoints else min(min(edge) for edge in edges)
+        path_vertices = [start]
+        current = start
+        while True:
+            nxt = pop_edge_from(current)
+            if nxt is None:
+                break
+            path_vertices.append(nxt)
+            current = nxt
+            if current == start:
+                break
+        if len(path_vertices) < 2:
+            continue
+        path = [(min_x + vx * cell_mm, min_y + vy * cell_mm) for vx, vy in path_vertices]
+        closed = points_match(path[0], path[-1], tolerance=0.001)
+        if closed:
+            path = simplify_closed_loop(path[:-1], tolerance=max(cell_mm * 1.4, 0.22))
+            path = [*path, path[0]]
+        else:
+            path = rdp_simplify(path, tolerance=max(cell_mm * 1.4, 0.22))
+        length = sum(point_distance(start_point, end_point) for start_point, end_point in zip(path, path[1:]))
+        if length >= max(min_loop_length_mm, cell_mm):
+            paths.append(path)
+    paths.sort(
+        key=lambda path: (
+            min(point[1] for point in path),
+            min(point[0] for point in path),
+            -point_distance(path[0], path[-1]),
+        )
+    )
+    return paths
+
+
+def add_perimeter_segments(
+    segments: list[dict],
+    color_blocks: list[dict],
+    *,
+    max_stitch_mm: float,
+) -> list[dict]:
+    next_step = max((segment.get("step", 0) for segment in segments), default=0)
+    extra_segments: list[dict] = []
+    for block in color_blocks:
+        block_index = block["index"]
+        block_segments = [
+            segment
+            for segment in segments
+            if segment.get("kind") == "stitch" and segment.get("blockIndex") == block_index
+        ]
+        for loop in stitched_boundary_loops(block_segments):
+            for start, end in zip(loop, loop[1:]):
+                last = start
+                for point in split_long_point_span(start, end, max_stitch_mm):
+                    next_step += 1
+                    extra_segments.append(
+                        {
+                            "x1": last[0],
+                            "y1": last[1],
+                            "x2": point[0],
+                            "y2": point[1],
+                            "kind": "stitch",
+                            "color": block["color"],
+                        "colorIndex": block.get("thread", block_index),
+                        "blockIndex": block_index,
+                        "step": next_step,
+                        "perimeter": True,
+                    }
+                )
+                    last = point
+    if not extra_segments:
+        return segments
+    block_counts = {block["index"]: 0 for block in color_blocks}
+    for segment in [*segments, *extra_segments]:
+        if segment.get("kind") == "stitch" and segment.get("blockIndex") in block_counts:
+            block_counts[segment["blockIndex"]] += 1
+    for block in color_blocks:
+        block["stitches"] = block_counts.get(block["index"], block.get("stitches", 0))
+    return [*segments, *extra_segments]
+
+
 def clean_run_points(
     points: list[tuple[float, float]],
     *,
     min_stitch_mm: float = 0.18,
     max_stitch_mm: float = 7.0,
-    lock_stitch_mm: float = 0.7,
+    lock_stitch_mm: float = 1.0,
+    min_run_length_mm: float = 1.0,
+    include_start_lock: bool = True,
 ) -> list[tuple[float, float]]:
     if len(points) < 2:
         return points
@@ -341,6 +651,9 @@ def clean_run_points(
             deduped.append(point)
     if len(deduped) < 2:
         return []
+    run_length = sum(point_distance(start, end) for start, end in zip(deduped, deduped[1:]))
+    if run_length < min_run_length_mm:
+        return []
 
     split_points = [deduped[0]]
     for start, end in zip(deduped, deduped[1:]):
@@ -348,34 +661,34 @@ def clean_run_points(
     if len(split_points) < 2:
         return []
 
+    def lock_point(
+        anchor: tuple[float, float],
+        neighbor: tuple[float, float],
+    ) -> tuple[float, float] | None:
+        span = point_distance(anchor, neighbor)
+        if span < min_stitch_mm:
+            return None
+        lock_length = min(lock_stitch_mm, span)
+        unit_x = (neighbor[0] - anchor[0]) / span
+        unit_y = (neighbor[1] - anchor[1]) / span
+        return (
+            anchor[0] + unit_x * lock_length,
+            anchor[1] + unit_y * lock_length,
+        )
+
     first = split_points[0]
     second = split_points[1]
-    first_span = point_distance(first, second)
-    if first_span > lock_stitch_mm + 0.001:
-        unit_x = (second[0] - first[0]) / first_span
-        unit_y = (second[1] - first[1]) / first_span
-        lock = (
-            first[0] + unit_x * lock_stitch_mm,
-            first[1] + unit_y * lock_stitch_mm,
-        )
-        split_points = [first, lock, first, *split_points[1:]]
-    elif first_span >= min_stitch_mm:
-        split_points = [first, second, first, *split_points[1:]]
+    if include_start_lock:
+        start_lock = lock_point(first, second)
+        if start_lock is not None:
+            split_points = [first, start_lock, first, start_lock, *split_points[1:]]
 
     if len(split_points) >= 2:
         last = split_points[-1]
         before_last = split_points[-2]
-        last_span = point_distance(before_last, last)
-        if last_span > lock_stitch_mm + 0.001:
-            unit_x = (last[0] - before_last[0]) / last_span
-            unit_y = (last[1] - before_last[1]) / last_span
-            lock = (
-                last[0] - unit_x * lock_stitch_mm,
-                last[1] - unit_y * lock_stitch_mm,
-            )
-            split_points = [*split_points, lock, last]
-        elif last_span >= min_stitch_mm:
-            split_points = [*split_points, before_last, last]
+        end_lock = lock_point(last, before_last)
+        if end_lock is not None:
+            split_points = [*split_points, end_lock, last, end_lock, last]
 
     return split_points
 
@@ -656,9 +969,19 @@ def render_thread_plan(color_blocks: list[dict], usage_by_block: dict[int, float
     )
 
 
-def render_legend(pattern, color_blocks: list[dict], color_controls: bool = False) -> str:
+def render_legend(
+    pattern,
+    color_blocks: list[dict],
+    color_controls: bool = False,
+    fill_type_info: dict | None = None,
+) -> str:
     items: list[str] = []
     inventory_options = render_inventory_options() if color_controls else ""
+    fill_by_block = {
+        item["block"]: item
+        for item in (fill_type_info or {}).get("blocks", [])
+        if isinstance(item, dict) and "block" in item
+    }
     for block in color_blocks:
         index = block["thread"]
         color = block["color"]
@@ -699,6 +1022,8 @@ def render_legend(pattern, color_blocks: list[dict], color_controls: bool = Fals
                 label_index=block["index"] + 1,
                 options=inventory_options,
             )
+        fill_type = fill_by_block.get(block["index"], {}).get("fill_type", "")
+        fill_text = f' <span class="fill-type">Fill: {html.escape(fill_type)}</span>' if fill_type else ""
         items.append(
             f'<li data-block-row="{block["index"]}">'
             '<details class="thread-details">'
@@ -706,7 +1031,7 @@ def render_legend(pattern, color_blocks: list[dict], color_controls: bool = Fals
             f'{checkbox}<span class="swatch" style="background:{html.escape(color)}"></span>'
             '<span class="thread-summary-text">'
             f'<strong>Block {block["index"] + 1}: {label}</strong>'
-            f'<small>{block["stitches"]} stitches</small>'
+            f'<small>{block["stitches"]} stitches{fill_text}</small>'
             '</span>'
             f'<code>{html.escape(color)}</code>'
             '<span class="thread-edit-label">Edit</span>'
@@ -739,12 +1064,16 @@ def render_html(
     max_colors: int = 6,
     color_merge_distance: float = 56.0,
     pdf_page: int = 1,
+    display_units: str = "metric",
+    fabric_color: str = "#fbfcfa",
+    stitch_perimeter: bool = False,
 ) -> str:
     min_x, min_y, max_x, max_y = design_bounds(segments, commands)
     width = max(max_x - min_x, 1.0)
     height = max(max_y - min_y, 1.0)
     padding = max(width, height) * 0.08
-    legend = render_legend(pattern, color_blocks, color_controls=True)
+    fill_type_info = classify_fill_types(segments, color_blocks)
+    legend = render_legend(pattern, color_blocks, color_controls=True, fill_type_info=fill_type_info)
     usage_by_block = estimate_thread_usage(segments)
     thread_plan = render_thread_plan(color_blocks, usage_by_block)
     thread_weight = normalize_thread_weight(thread_weight)
@@ -753,6 +1082,7 @@ def render_html(
         "Design": input_file.name,
         "Source": source_label,
         "Size": f"{width:.1f} x {height:.1f} mm",
+        "Fill types": fill_type_info["summary"],
         "Needle points": counts["needle_points"],
         "Stitch segments": counts["stitch_segments"],
         "Jumps": counts["jumps"],
@@ -762,6 +1092,7 @@ def render_html(
         "Threads": len(pattern.threadlist) if pattern is not None else len(color_blocks),
         "Thread weight": thread_weight_label(thread_weight),
         "Max stitch length": f"{max_stitch_mm:.1f} mm",
+        "Perimeter stitch": "On" if stitch_perimeter else "Off",
         "Estimated stitch time": estimate_stitch_time(counts, color_blocks),
     }
     max_step = counts["needle_points"]
@@ -817,6 +1148,11 @@ def render_html(
     embedded_palette = html.escape(json.dumps(palette_data, separators=(",", ":")), quote=False)
     embedded_usage = html.escape(json.dumps(usage_data, separators=(",", ":")), quote=False)
     embedded_inventory = html.escape(json.dumps(inventory_data, separators=(",", ":")), quote=False)
+    display_units = "sae" if display_units == "sae" else "metric"
+    if not re.match(r"^#[0-9A-Fa-f]{6}$", fabric_color or ""):
+        fabric_color = "#fbfcfa"
+    embedded_display_units = json.dumps(display_units)
+    embedded_fabric_color = json.dumps(fabric_color)
     pes_download = ""
     email_project = ""
     project_download = ""
@@ -858,6 +1194,7 @@ def render_html(
             '<input type="hidden" name="max_colors" value="{max_colors}">'
             '<input type="hidden" name="color_merge_distance" value="{color_merge_distance}">'
             '<input type="hidden" name="pdf_page" value="{pdf_page}">'
+            '<input type="hidden" name="stitch_perimeter" value="{stitch_perimeter}">'
             '<input id="selected-blocks" type="hidden" name="selected_blocks" value="">'
             '<input id="color-order" type="hidden" name="color_order" value="">'
             '<input id="color-overrides" type="hidden" name="color_overrides" value="">'
@@ -874,6 +1211,7 @@ def render_html(
             max_colors=max_colors,
             color_merge_distance=color_merge_distance,
             pdf_page=pdf_page,
+            stitch_perimeter="1" if stitch_perimeter else "",
         )
         export_button = '<button class="export-button" type="submit">Recreate PES</button>'
         export_close = "</form>"
@@ -899,6 +1237,10 @@ def render_html(
       display: grid;
       grid-template-columns: var(--sidebar-width) 1fr;
     }}
+    body.left-panel-collapsed,
+    body.left-panel-floating {{
+      grid-template-columns: 1fr;
+    }}
     aside {{
       position: sticky;
       top: 0;
@@ -909,6 +1251,20 @@ def render_html(
       padding: 24px;
       overflow-y: auto;
       overscroll-behavior: contain;
+    }}
+    body.left-panel-collapsed aside {{
+      display: none;
+    }}
+    body.left-panel-floating aside {{
+      position: fixed;
+      z-index: 17;
+      left: 12px;
+      top: 12px;
+      width: min(var(--sidebar-width), calc(100vw - 24px));
+      height: calc(100vh - 24px);
+      border: 1px solid #d9ded6;
+      border-radius: 8px;
+      box-shadow: 0 12px 32px rgba(23, 32, 38, 0.16);
     }}
     .sidebar-resizer {{
       position: fixed;
@@ -940,6 +1296,10 @@ def render_html(
     body.resizing-sidebar {{
       cursor: col-resize;
       user-select: none;
+    }}
+    body.left-panel-collapsed .sidebar-resizer,
+    body.left-panel-floating .sidebar-resizer {{
+      display: none;
     }}
     main {{
       min-width: 0;
@@ -1375,6 +1735,9 @@ def render_html(
       text-overflow: ellipsis;
       white-space: nowrap;
     }}
+    .fill-type {{
+      color: #52605a;
+    }}
     li code {{
       width: fit-content;
       color: #52605a;
@@ -1461,7 +1824,8 @@ def render_html(
       grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
       gap: 6px;
     }}
-    .viewer-menu-panel a {{
+    .viewer-menu-panel a,
+    .menu-panel-button {{
       min-height: 36px;
       display: flex;
       justify-content: center;
@@ -1474,8 +1838,10 @@ def render_html(
       font-size: 13px;
       font-weight: 700;
       text-align: center;
+      background: #ffffff;
     }}
-    .viewer-menu-panel a:hover {{
+    .viewer-menu-panel a:hover,
+    .menu-panel-button:hover {{
       background: #eaf2ef;
     }}
     .viewer-menu-panel .download-action {{
@@ -1502,6 +1868,36 @@ def render_html(
     .viewer-menu-panel .thread-plan {{
       margin: 0;
       max-height: none;
+    }}
+    .viewer-settings {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 8px;
+      padding: 10px;
+      border: 1px solid #e2e7df;
+      border-radius: 8px;
+      background: #fbfcfa;
+    }}
+    .viewer-settings label {{
+      display: grid;
+      gap: 5px;
+      color: #52605a;
+      font-size: 12px;
+      font-weight: 700;
+    }}
+    .viewer-settings select,
+    .viewer-settings input[type="color"] {{
+      width: 100%;
+      min-height: 34px;
+      border: 1px solid #cbd4cf;
+      border-radius: 6px;
+      background: #ffffff;
+      color: #172026;
+      font: inherit;
+      font-size: 13px;
+    }}
+    .viewer-settings input[type="color"] {{
+      padding: 3px;
     }}
     .block-toggle {{
       width: 16px;
@@ -1544,11 +1940,7 @@ def render_html(
     .stage {{
       width: 100%;
       min-height: calc(100vh - 36px);
-      background:
-        linear-gradient(#edf0eb 1px, transparent 1px),
-        linear-gradient(90deg, #edf0eb 1px, transparent 1px),
-        #fbfcfa;
-      background-size: 10mm 10mm;
+      background: #fbfcfa;
       border: 1px solid #d9ded6;
       border-radius: 8px;
       overflow: hidden;
@@ -1683,7 +2075,23 @@ def render_html(
         {pes_download}
         {project_download}
         {email_project}
+        <button id="left-panel-toggle" class="menu-panel-button" type="button">Hide Left Panel</button>
+        <button id="left-panel-float" class="menu-panel-button" type="button">Float Left Panel</button>
+        <button id="thread-panel-toggle" class="menu-panel-button" type="button">Hide Threads</button>
       </nav>
+      <section class="viewer-settings" aria-label="Viewer settings">
+        <label>
+          Units
+          <select id="measurement-units">
+            <option value="metric">Metric (mm)</option>
+            <option value="sae">SAE (inches)</option>
+          </select>
+        </label>
+        <label>
+          Fabric color
+          <input id="fabric-color" type="color" value="#fbfcfa">
+        </label>
+      </section>
       {thread_plan}
     </div>
   </div>
@@ -1783,6 +2191,11 @@ def render_html(
     const zoomReadout = document.getElementById("zoom-readout");
     const canvasTooltip = document.getElementById("canvas-tooltip");
     const viewerMenuToggle = document.getElementById("viewer-menu-toggle");
+    const leftPanelToggle = document.getElementById("left-panel-toggle");
+    const leftPanelFloat = document.getElementById("left-panel-float");
+    const threadPanelToggle = document.getElementById("thread-panel-toggle");
+    const measurementUnits = document.getElementById("measurement-units");
+    const fabricColor = document.getElementById("fabric-color");
     const sidebarResizer = document.getElementById("sidebar-resizer");
     const threadFloaterToggle = document.getElementById("thread-floater-toggle");
     const shoppingListText = document.getElementById("shopping-list-text");
@@ -1809,6 +2222,12 @@ def render_html(
     const thumbnailMode = new URLSearchParams(window.location.search).get("embed") === "thumbnail";
     if (thumbnailMode) {{
       document.body.classList.add("thumbnail-mode", "hide-jumps", "hide-trims", "hide-color-changes");
+    }}
+    const savedLeftPanelMode = localStorage.getItem("openstitch-left-panel-mode") || "docked";
+    if (savedLeftPanelMode === "collapsed") {{
+      document.body.classList.add("left-panel-collapsed");
+    }} else if (savedLeftPanelMode === "floating") {{
+      document.body.classList.add("left-panel-floating");
     }}
     const blockToggles = [...document.querySelectorAll(".block-toggle")];
     const selectedBlocksInput = document.getElementById("selected-blocks");
@@ -1844,6 +2263,12 @@ def render_html(
     let showColorChanges = !thumbnailMode;
     let deviceScale = 1;
     let sidebarDrag = null;
+    let displayUnits = localStorage.getItem("openstitch-measurement-units") || {embedded_display_units};
+    let fabricBackground = localStorage.getItem("openstitch-fabric-color") || {embedded_fabric_color};
+    if (!/^#[0-9a-f]{{6}}$/i.test(fabricBackground)) fabricBackground = "#fbfcfa";
+    if (!["metric", "sae"].includes(displayUnits)) displayUnits = "metric";
+    if (measurementUnits) measurementUnits.value = displayUnits;
+    if (fabricColor) fabricColor.value = fabricBackground;
 
     function setSidebarWidth(width) {{
       const clamped = Math.max(260, Math.min(560, Math.round(width)));
@@ -1905,7 +2330,81 @@ def render_html(
     }}
 
     function formatPoint(x, y) {{
+      if (displayUnits === "sae") {{
+        return `${{(x / 25.4).toFixed(3)}} in, ${{(y / 25.4).toFixed(3)}} in`;
+      }}
       return `${{x.toFixed(1)}} mm, ${{y.toFixed(1)}} mm`;
+    }}
+
+    function gridSpec() {{
+      const viewport = canvasViewport();
+      if (displayUnits === "sae") {{
+        const candidates = [0.125, 0.25, 0.5, 1, 2, 4];
+        for (const inches of candidates) {{
+          const mm = inches * 25.4;
+          const px = (mm / Math.max(viewBoxState.width, 0.001)) * viewport.width;
+          if (px >= 44) {{
+            return {{
+              stepMm: mm,
+              label: (value) => `${{(value / 25.4).toFixed(inches < 1 ? 3 : inches < 2 ? 2 : 1)}} in`,
+            }};
+          }}
+        }}
+        return {{ stepMm: 101.6, label: (value) => `${{(value / 25.4).toFixed(1)}} in` }};
+      }}
+      const candidates = [1, 2, 5, 10, 20, 50, 100];
+      for (const mm of candidates) {{
+        const px = (mm / Math.max(viewBoxState.width, 0.001)) * viewport.width;
+        if (px >= 44) return {{ stepMm: mm, label: (value) => `${{Math.round(value)}} mm` }};
+      }}
+      return {{ stepMm: 100, label: (value) => `${{Math.round(value)}} mm` }};
+    }}
+
+    function drawMeasuredGrid() {{
+      const viewport = canvasViewport();
+      const spec = gridSpec();
+      const bg = fabricBackground.replace("#", "");
+      const r = parseInt(bg.slice(0, 2), 16);
+      const g = parseInt(bg.slice(2, 4), 16);
+      const b = parseInt(bg.slice(4, 6), 16);
+      const darkFabric = (r * 0.299 + g * 0.587 + b * 0.114) < 128;
+      ctx.save();
+      ctx.fillStyle = fabricBackground;
+      ctx.fillRect(0, 0, toolpath.width, toolpath.height);
+      ctx.beginPath();
+      ctx.rect(viewport.x, viewport.y, viewport.width, viewport.height);
+      ctx.clip();
+      ctx.lineWidth = Math.max(1, deviceScale);
+      ctx.strokeStyle = darkFabric ? "rgba(255, 255, 255, 0.16)" : "rgba(92, 107, 99, 0.16)";
+      ctx.fillStyle = darkFabric ? "rgba(255, 255, 255, 0.78)" : "rgba(23, 32, 38, 0.72)";
+      ctx.font = `${{Math.max(10, 11 * deviceScale)}}px Segoe UI, Arial, sans-serif`;
+      ctx.textAlign = "left";
+      ctx.textBaseline = "top";
+      const startX = Math.floor(viewBoxState.x / spec.stepMm) * spec.stepMm;
+      const endX = viewBoxState.x + viewBoxState.width;
+      const startY = Math.floor(viewBoxState.y / spec.stepMm) * spec.stepMm;
+      const endY = viewBoxState.y + viewBoxState.height;
+      for (let x = startX; x <= endX + 0.001; x += spec.stepMm) {{
+        const sx = toCanvasX(x);
+        ctx.beginPath();
+        ctx.moveTo(sx, viewport.y);
+        ctx.lineTo(sx, viewport.y + viewport.height);
+        ctx.stroke();
+        if (sx >= viewport.x + 4 && sx <= viewport.x + viewport.width - 4) {{
+          ctx.fillText(spec.label(x), sx + 3 * deviceScale, viewport.y + 3 * deviceScale);
+        }}
+      }}
+      for (let y = startY; y <= endY + 0.001; y += spec.stepMm) {{
+        const sy = toCanvasY(y);
+        ctx.beginPath();
+        ctx.moveTo(viewport.x, sy);
+        ctx.lineTo(viewport.x + viewport.width, sy);
+        ctx.stroke();
+        if (sy >= viewport.y + 18 * deviceScale && sy <= viewport.y + viewport.height - 4) {{
+          ctx.fillText(spec.label(y), viewport.x + 4 * deviceScale, sy + 3 * deviceScale);
+        }}
+      }}
+      ctx.restore();
     }}
 
     function segmentKindName(kind) {{
@@ -2006,6 +2505,7 @@ def render_html(
     function renderScene() {{
       if (!ctx) return;
       ctx.clearRect(0, 0, toolpath.width, toolpath.height);
+      drawMeasuredGrid();
       ctx.lineCap = "round";
       ctx.lineJoin = "round";
 
@@ -2384,6 +2884,61 @@ def render_html(
     viewerMenuToggle.addEventListener("click", () => {{
       document.body.classList.toggle("viewer-menu-open");
     }});
+    function syncPanelMenuLabels() {{
+      if (leftPanelToggle) {{
+        leftPanelToggle.textContent = document.body.classList.contains("left-panel-collapsed")
+          ? "Show Left Panel"
+          : "Hide Left Panel";
+      }}
+      if (leftPanelFloat) {{
+        leftPanelFloat.textContent = document.body.classList.contains("left-panel-floating")
+          ? "Dock Left Panel"
+          : "Float Left Panel";
+      }}
+      if (threadPanelToggle) {{
+        threadPanelToggle.textContent = document.body.classList.contains("thread-floater-collapsed")
+          ? "Show Threads"
+          : "Hide Threads";
+      }}
+    }}
+    if (leftPanelToggle) {{
+      leftPanelToggle.addEventListener("click", () => {{
+        const collapsed = !document.body.classList.contains("left-panel-collapsed");
+        document.body.classList.toggle("left-panel-collapsed", collapsed);
+        if (collapsed) {{
+          document.body.classList.remove("left-panel-floating");
+          localStorage.setItem("openstitch-left-panel-mode", "collapsed");
+        }} else {{
+          localStorage.setItem("openstitch-left-panel-mode", "docked");
+        }}
+        syncPanelMenuLabels();
+        resizeCanvas();
+      }});
+    }}
+    if (leftPanelFloat) {{
+      leftPanelFloat.addEventListener("click", () => {{
+        const floating = !document.body.classList.contains("left-panel-floating");
+        document.body.classList.remove("left-panel-collapsed");
+        document.body.classList.toggle("left-panel-floating", floating);
+        localStorage.setItem("openstitch-left-panel-mode", floating ? "floating" : "docked");
+        syncPanelMenuLabels();
+        resizeCanvas();
+      }});
+    }}
+    if (threadPanelToggle) {{
+      threadPanelToggle.addEventListener("click", () => {{
+        const collapsed = document.body.classList.toggle("thread-floater-collapsed");
+        if (threadFloaterToggle) {{
+          threadFloaterToggle.textContent = collapsed ? "T" : "-";
+          threadFloaterToggle.setAttribute(
+            "aria-label",
+            collapsed ? "Expand thread controls" : "Collapse thread controls"
+          );
+        }}
+        syncPanelMenuLabels();
+        resizeCanvas();
+      }});
+    }}
     if (threadFloaterToggle) {{
       threadFloaterToggle.addEventListener("click", () => {{
         const collapsed = document.body.classList.toggle("thread-floater-collapsed");
@@ -2392,9 +2947,11 @@ def render_html(
           "aria-label",
           collapsed ? "Expand thread controls" : "Collapse thread controls"
         );
+        syncPanelMenuLabels();
         resizeCanvas();
       }});
     }}
+    syncPanelMenuLabels();
     document.addEventListener("click", (event) => {{
       if (!event.target.closest(".viewer-menu")) {{
         document.body.classList.remove("viewer-menu-open");
@@ -2407,6 +2964,20 @@ def render_html(
     speedSlider.addEventListener("input", () => {{
       speedLabel.textContent = `${{speedSlider.value}} stitches/sec`;
     }});
+    if (measurementUnits) {{
+      measurementUnits.addEventListener("change", () => {{
+        displayUnits = measurementUnits.value === "sae" ? "sae" : "metric";
+        localStorage.setItem("openstitch-measurement-units", displayUnits);
+        renderScene();
+      }});
+    }}
+    if (fabricColor) {{
+      fabricColor.addEventListener("input", () => {{
+        fabricBackground = /^#[0-9a-f]{{6}}$/i.test(fabricColor.value) ? fabricColor.value : "#fbfcfa";
+        localStorage.setItem("openstitch-fabric-color", fabricBackground);
+        renderScene();
+      }});
+    }}
     if (copyShoppingList && shoppingListText) {{
       copyShoppingList.addEventListener("click", async () => {{
         shoppingListText.select();
@@ -2679,32 +3250,35 @@ def collect_svg_segments(
             }
         )
         for start, end in zip(run.points_mm, run.points_mm[1:]):
-            counts["needle_points"] += 1
-            counts["stitch_segments"] += 1
-            active_block["stitches"] += 1
-            segments.append(
-                {
-                    "x1": start[0],
-                    "y1": start[1],
-                    "x2": end[0],
-                    "y2": end[1],
-                    "kind": "stitch",
-                    "color": active_block["color"],
-                    "colorIndex": active_block["thread"],
-                    "blockIndex": active_block["index"],
-                    "step": counts["needle_points"],
-                }
-            )
-            commands.append(
-                {
-                    "x": end[0],
-                    "y": end[1],
-                    "command": "stitch",
-                    "color": active_block["thread"],
-                    "step": counts["needle_points"],
-                }
-            )
-            previous_point = end
+            segment_start = start
+            for point in split_long_point_span(start, end, max_stitch_mm):
+                counts["needle_points"] += 1
+                counts["stitch_segments"] += 1
+                active_block["stitches"] += 1
+                segments.append(
+                    {
+                        "x1": segment_start[0],
+                        "y1": segment_start[1],
+                        "x2": point[0],
+                        "y2": point[1],
+                        "kind": "stitch",
+                        "color": active_block["color"],
+                        "colorIndex": active_block["thread"],
+                        "blockIndex": active_block["index"],
+                        "step": counts["needle_points"],
+                    }
+                )
+                commands.append(
+                    {
+                        "x": point[0],
+                        "y": point[1],
+                        "command": "stitch",
+                        "color": active_block["thread"],
+                        "step": counts["needle_points"],
+                    }
+                )
+                segment_start = point
+                previous_point = point
 
     if not segments:
         raise ValueError("No stitches were generated from the SVG.")
@@ -2752,7 +3326,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--fill-mode",
-        choices=("tatami", "horizontal", "crosshatch"),
+        choices=("mixed", "contour", "tatami", "horizontal", "crosshatch", "outline"),
         default="tatami",
         help="For SVG/image/PDF input, fill style; default: tatami",
     )
@@ -2820,6 +3394,9 @@ def build_viewer_html(
     color_export_action: str | None = None,
     source_name: str | None = None,
     project_href: str | None = None,
+    display_units: str = "metric",
+    fabric_color: str = "#fbfcfa",
+    stitch_perimeter: bool = False,
 ) -> tuple[str, tuple[float, float, float, float], dict]:
     pattern = None
     if input_file.suffix.lower() == ".svg" and not svg_needs_rasterization(input_file):
@@ -2849,6 +3426,7 @@ def build_viewer_html(
             max_stitch_mm=max_stitch_mm,
             pdf_page=pdf_page,
             pdf_dpi=pdf_dpi,
+            stitch_perimeter=stitch_perimeter,
         )
         source_label = "Image converted preview"
     else:
@@ -2887,6 +3465,9 @@ def build_viewer_html(
         max_colors=max_colors,
         color_merge_distance=color_merge_distance,
         pdf_page=pdf_page,
+        display_units=display_units,
+        fabric_color=fabric_color,
+        stitch_perimeter=stitch_perimeter,
     )
     return html_text, design_bounds(segments, commands), counts
 
@@ -2901,8 +3482,11 @@ def write_segments_as_pes(
     thread_label_overrides: dict[int, str] | None = None,
     *,
     max_stitch_mm: float = 7.0,
-    min_stitch_mm: float = 0.3,
-    lock_stitch_mm: float = 0.7,
+    min_stitch_mm: float = 0.45,
+    lock_stitch_mm: float = 1.0,
+    connect_short_gaps: bool = False,
+    min_run_length_mm: float = 1.0,
+    stitch_perimeter: bool = False,
 ) -> list[dict]:
     selected_blocks = selected_blocks if selected_blocks is not None else {
         block["index"] for block in color_blocks
@@ -2936,6 +3520,8 @@ def write_segments_as_pes(
     active_block: int | None = None
     previous_point: tuple[float, float] | None = None
     written_blocks: list[dict] = []
+    if stitch_perimeter:
+        segments = add_perimeter_segments(segments, color_blocks, max_stitch_mm=max_stitch_mm)
 
     def ensure_active_block(block_index: int) -> None:
         nonlocal active_block
@@ -2960,13 +3546,15 @@ def write_segments_as_pes(
             pattern.color_change()
         active_block = block_index
 
-    def write_run(block_index: int, points: list[tuple[float, float]]) -> None:
+    def write_run(block_index: int, points: list[tuple[float, float]], is_perimeter: bool = False) -> None:
         nonlocal active_block, previous_point
         clean_points = clean_run_points(
             points,
-            min_stitch_mm=min_stitch_mm,
+            min_stitch_mm=min(min_stitch_mm, 0.30) if is_perimeter else min_stitch_mm,
             max_stitch_mm=max_stitch_mm,
             lock_stitch_mm=lock_stitch_mm,
+            min_run_length_mm=min(min_run_length_mm, 0.30) if is_perimeter else min_run_length_mm,
+            include_start_lock=False,
         )
         if len(clean_points) < 2:
             return
@@ -2977,30 +3565,60 @@ def write_segments_as_pes(
                 rounded_points.append(rounded)
         if len(rounded_points) < 2:
             return
+        old_active_block = active_block
         ensure_active_block(block_index)
         start_units = rounded_points[0]
         current_units: tuple[int, int] | None = None
-        if previous_point is None or to_embroidery_units(previous_point) != start_units:
-            if previous_point is None:
-                jump_points = [start_units]
-            else:
-                jump_points = [
-                    to_embroidery_units(point)
-                    for point in split_long_point_span(
-                        previous_point,
-                        (start_units[0] / EMB_UNITS_PER_MM, start_units[1] / EMB_UNITS_PER_MM),
-                        max_stitch_mm,
-                    )
-                ]
-            previous_jump: tuple[int, int] | None = None
-            for jump_x, jump_y in jump_points:
-                if previous_jump == (jump_x, jump_y):
+        start_needs_tie_in = old_active_block != block_index or previous_point is None
+
+        def emit_tie_in() -> None:
+            nonlocal current_units
+            if len(rounded_points) < 2:
+                return
+            next_units = rounded_points[1]
+            dx = next_units[0] - start_units[0]
+            dy = next_units[1] - start_units[1]
+            span = math.hypot(dx, dy)
+            min_units = max(1.0, min_stitch_mm * EMB_UNITS_PER_MM)
+            if span < min_units:
+                return
+            lock_units = min(lock_stitch_mm * EMB_UNITS_PER_MM, span)
+            lock_x = int(round(start_units[0] + (dx / span) * lock_units))
+            lock_y = int(round(start_units[1] + (dy / span) * lock_units))
+            lock_units_point = (lock_x, lock_y)
+            if lock_units_point == start_units:
+                return
+            for tie_point in (lock_units_point, start_units, lock_units_point, start_units):
+                if current_units == tie_point:
                     continue
-                pattern.add_stitch_absolute(embroidery.JUMP, jump_x, jump_y)
-                previous_jump = (jump_x, jump_y)
-                current_units = (jump_x, jump_y)
+                pattern.add_stitch_absolute(embroidery.STITCH, tie_point[0], tie_point[1])
+                current_units = tie_point
+
+        if previous_point is None or to_embroidery_units(previous_point) != start_units:
+            start_needs_tie_in = True
+            if (
+                connect_short_gaps
+                and
+                previous_point is not None
+                and old_active_block == block_index
+                and point_distance(
+                    previous_point,
+                    (start_units[0] / EMB_UNITS_PER_MM, start_units[1] / EMB_UNITS_PER_MM),
+                ) <= max(max_stitch_mm, 0.1)
+            ):
+                pattern.add_stitch_absolute(embroidery.STITCH, start_units[0], start_units[1])
+                current_units = start_units
+            elif previous_point is None:
+                pattern.add_stitch_absolute(embroidery.STITCH, start_units[0], start_units[1])
+                current_units = start_units
+            else:
+                pattern.add_stitch_absolute(embroidery.JUMP, start_units[0], start_units[1])
+                pattern.add_stitch_absolute(embroidery.STITCH, start_units[0], start_units[1])
+                current_units = start_units
         else:
             current_units = start_units
+        if start_needs_tie_in and current_units == start_units:
+            emit_tie_in()
         for x, y in rounded_points[1:]:
             if current_units == (x, y):
                 continue
@@ -3012,21 +3630,29 @@ def write_segments_as_pes(
 
     def write_segment_sequence(sequence: list[dict]) -> None:
         current_block: int | None = None
+        current_perimeter = False
         run_points: list[tuple[float, float]] = []
 
         def flush() -> None:
             nonlocal run_points
             if current_block is not None and run_points:
-                write_run(current_block, run_points)
+                write_run(current_block, run_points, current_perimeter)
             run_points = []
 
         for segment in sequence:
+            nonlocal_current_perimeter = bool(segment.get("perimeter"))
             block_index = segment["blockIndex"]
             start = (segment["x1"], segment["y1"])
             end = (segment["x2"], segment["y2"])
-            if current_block != block_index or not run_points or not points_match(run_points[-1], start):
+            if (
+                current_block != block_index
+                or current_perimeter != nonlocal_current_perimeter
+                or not run_points
+                or not points_match(run_points[-1], start)
+            ):
                 flush()
                 current_block = block_index
+                current_perimeter = nonlocal_current_perimeter
                 run_points = [start, end]
             else:
                 run_points.append(end)
@@ -3053,7 +3679,13 @@ def write_segments_as_pes(
     if pattern.count_stitches() == 0:
         raise ValueError("No selected stitches to write.")
     pattern.end()
-    pattern.write(str(output_file))
+    pattern.write(
+        str(output_file),
+        max_jump=int(5.0 * EMB_UNITS_PER_MM),
+        full_jump=True,
+        tie_on=True,
+        tie_off=True,
+    )
     return written_blocks
 
 
@@ -3078,6 +3710,7 @@ def write_filtered_pes(
     pdf_page: int = 1,
     pdf_dpi: int = 180,
     center: bool = True,
+    stitch_perimeter: bool = False,
 ) -> None:
     if input_file.suffix.lower() == ".svg" and not svg_needs_rasterization(input_file):
         segments, _, color_blocks, _ = collect_svg_segments(
@@ -3120,12 +3753,6 @@ def write_filtered_pes(
         for segment in segments:
             if segment["blockIndex"] in block_colors:
                 segment["color"] = block_colors[segment["blockIndex"]]
-    segments, _, color_blocks, _ = group_color_blocks_by_inventory(
-        segments,
-        [],
-        color_blocks,
-        {},
-    )
     written_blocks = write_segments_as_pes(
         segments,
         color_blocks,
@@ -3135,6 +3762,7 @@ def write_filtered_pes(
         color_overrides,
         thread_label_overrides,
         max_stitch_mm=max_stitch_mm,
+        stitch_perimeter=stitch_perimeter,
     )
     thread_metadata_path(output_file).write_text(
         json.dumps({"blocks": written_blocks}, indent=2),
@@ -3159,6 +3787,7 @@ def write_svg_as_pes(
     pdf_page: int = 1,
     pdf_dpi: int = 180,
     center: bool = True,
+    stitch_perimeter: bool = False,
 ) -> None:
     if svg_needs_rasterization(input_file):
         raster_fit_width = fit_width_mm if fit_width_mm is not None else 90.0
@@ -3193,18 +3822,21 @@ def write_svg_as_pes(
         color_blocks,
         output_file,
         max_stitch_mm=max_stitch_mm,
+        stitch_perimeter=stitch_perimeter,
     )
 
 
 def write_image_as_pes(source_file: Path, output_file: Path, **settings) -> None:
     settings.pop("thread_weight", None)
     max_stitch_mm = float(settings.get("max_stitch_mm", 3.0))
+    stitch_perimeter = bool(settings.pop("stitch_perimeter", False))
     segments, _, color_blocks, _ = image_to_segments(source_file, **settings)
     write_segments_as_pes(
         segments,
         color_blocks,
         output_file,
         max_stitch_mm=max_stitch_mm,
+        stitch_perimeter=stitch_perimeter,
     )
 
 

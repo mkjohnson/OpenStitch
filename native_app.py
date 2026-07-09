@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import base64
+import copy
 from email.message import EmailMessage
+import html
 import json
 import math
 import os
@@ -20,6 +22,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QColorDialog,
     QComboBox,
+    QDockWidget,
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
@@ -46,11 +49,13 @@ from PySide6.QtWidgets import (
 from image_digitizer import image_to_segments, is_raster_source, svg_needs_rasterization
 from pes_viewer import (
     apply_thread_metadata,
+    add_perimeter_segments,
     collect_segments,
     collect_svg_segments,
     design_bounds,
     estimate_stitch_time,
     estimate_thread_usage,
+    classify_fill_types,
     group_color_blocks_by_inventory,
     thread_metadata_path,
     write_segments_as_pes,
@@ -59,6 +64,11 @@ from thread_catalog import load_thread_catalog
 from thread_inventory import add_inventory_item, delete_inventory_item, load_inventory, normalize_hex
 from thread_settings import DEFAULT_THREAD_WEIGHT, recommended_fill_spacing
 from viewer_server import project_settings, project_summary_text, safe_name, write_project_file
+from viewer_server import (
+    BROTHER_DUETTA_MAX_HEIGHT_MM,
+    BROTHER_DUETTA_MAX_WIDTH_MM,
+    brother_duetta_frame_note,
+)
 
 
 OUTPUT_DIR = Path.cwd() / "viewer_output"
@@ -92,6 +102,11 @@ class StitchCanvas(QWidget):
         self.show_jumps = False
         self.show_points = False
         self.show_markers = False
+        self.edit_mode = False
+        self.on_add_stitch = None
+        self.on_delete_stitch = None
+        self.background_color = "#fbfcfa"
+        self.measurement_units = "metric"
         self.visible_blocks: set[int] | None = None
         self._drag_start: QPoint | None = None
         self._drag_pan = QPointF(0, 0)
@@ -127,17 +142,39 @@ class StitchCanvas(QWidget):
         self.pan = QPointF(0, 0)
         self.update()
 
+    def set_background_color(self, color: str) -> None:
+        self.background_color = color
+        self.update()
+
+    def set_measurement_units(self, units: str) -> None:
+        self.measurement_units = "sae" if units == "sae" else "metric"
+        self.update()
+
+    def set_edit_mode(self, enabled: bool) -> None:
+        self.edit_mode = bool(enabled)
+        self.setCursor(Qt.CrossCursor if self.edit_mode else Qt.ArrowCursor)
+
     def wheelEvent(self, event) -> None:  # noqa: N802 - Qt override
         factor = 1.15 if event.angleDelta().y() > 0 else 1 / 1.15
         self.zoom = max(0.12, min(30.0, self.zoom * factor))
         self.update()
 
     def mousePressEvent(self, event) -> None:  # noqa: N802 - Qt override
+        if self.edit_mode:
+            point = self._design_point(event.pos())
+            if event.button() == Qt.LeftButton and self.on_add_stitch:
+                self.on_add_stitch(point)
+                return
+            if event.button() == Qt.RightButton and self.on_delete_stitch:
+                self.on_delete_stitch(point)
+                return
         if event.button() == Qt.LeftButton:
             self._drag_start = event.pos()
             self._drag_pan = QPointF(self.pan)
 
     def mouseMoveEvent(self, event) -> None:  # noqa: N802 - Qt override
+        if self.edit_mode:
+            return
         if self._drag_start is None:
             return
         delta = event.pos() - self._drag_start
@@ -165,43 +202,78 @@ class StitchCanvas(QWidget):
         scale, offset_x, offset_y = self._transform()
         return QPointF(x * scale + offset_x, y * scale + offset_y)
 
+    def _design_point(self, point: QPoint) -> tuple[float, float]:
+        scale, offset_x, offset_y = self._transform()
+        return ((point.x() - offset_x) / scale, (point.y() - offset_y) / scale)
+
     def paintEvent(self, event) -> None:  # noqa: N802 - Qt override
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, False)
-        painter.fillRect(self.rect(), QColor("#fbfcfa"))
+        painter.fillRect(self.rect(), QColor(self.background_color))
         self._draw_grid(painter)
         if not self.segments:
             painter.setPen(QColor("#52605a"))
             painter.drawText(self.rect(), Qt.AlignCenter, "Import a design to preview stitches")
             return
         self._draw_segments(painter)
+        if self.show_points:
+            self._draw_needle_points(painter)
         if self.show_markers:
             self._draw_markers(painter)
 
     def _draw_grid(self, painter: QPainter) -> None:
         min_x, min_y, max_x, max_y = self.bounds
         scale, offset_x, offset_y = self._transform()
-        painter.setPen(QPen(QColor("#edf0ec"), 1))
-        step = 10
+        grid_color, label_color = self._grid_colors()
+        painter.setPen(QPen(grid_color, 1))
+        step = self._grid_step(scale)
         start_x = math.floor(min_x / step) * step
         end_x = math.ceil(max_x / step) * step
         start_y = math.floor(min_y / step) * step
         end_y = math.ceil(max_y / step) * step
+        painter.setFont(self.font())
         x = start_x
         while x <= end_x:
             sx = x * scale + offset_x
             painter.drawLine(QPointF(sx, 0), QPointF(sx, self.height()))
+            if 4 <= sx <= self.width() - 48:
+                painter.setPen(label_color)
+                painter.drawText(QPointF(sx + 4, 16), self._format_measure(x))
+                painter.setPen(QPen(grid_color, 1))
             x += step
         y = start_y
         while y <= end_y:
             sy = y * scale + offset_y
             painter.drawLine(QPointF(0, sy), QPointF(self.width(), sy))
+            if 22 <= sy <= self.height() - 8:
+                painter.setPen(label_color)
+                painter.drawText(QPointF(6, sy + 14), self._format_measure(y))
+                painter.setPen(QPen(grid_color, 1))
             y += step
+
+    def _grid_colors(self) -> tuple[QColor, QColor]:
+        background = QColor(self.background_color)
+        brightness = background.red() * 0.299 + background.green() * 0.587 + background.blue() * 0.114
+        if brightness < 128:
+            return QColor(255, 255, 255, 42), QColor(255, 255, 255, 200)
+        return QColor("#edf0ec"), QColor("#5c6b63")
+
+    def _grid_step(self, scale: float) -> float:
+        candidates = [3.175, 6.35, 12.7, 25.4, 50.8, 101.6] if self.measurement_units == "sae" else [1, 2, 5, 10, 20, 50, 100]
+        for step in candidates:
+            if step * scale >= 44:
+                return step
+        return candidates[-1]
+
+    def _format_measure(self, value_mm: float) -> str:
+        if self.measurement_units == "sae":
+            value = value_mm / 25.4
+            return f"{value:.3f} in" if abs(value) < 1 else f"{value:.2f} in"
+        return f"{round(value_mm)} mm"
 
     def _draw_segments(self, painter: QPainter) -> None:
         scale, _, _ = self._transform()
         stitch_width = max(1, min(3, int(round(scale * 0.08))))
-        point_radius = max(1.2, stitch_width * 1.8)
         for segment in self.segments:
             if segment.get("step", 0) > self.current_step:
                 continue
@@ -223,10 +295,22 @@ class StitchCanvas(QWidget):
             start = self._point(segment["x1"], segment["y1"])
             end = self._point(segment["x2"], segment["y2"])
             painter.drawLine(start, end)
-            if self.show_points and kind == "stitch":
-                painter.setBrush(QColor(segment["color"]))
-                painter.setPen(QPen(QColor("#172026"), 0.6))
-                painter.drawEllipse(end, point_radius, point_radius)
+
+    def _draw_needle_points(self, painter: QPainter) -> None:
+        scale, _, _ = self._transform()
+        stitch_width = max(1, min(3, int(round(scale * 0.08))))
+        point_radius = max(2.0, stitch_width * 2.0)
+        painter.setPen(QPen(QColor("#172026"), max(0.6, stitch_width * 0.45)))
+        for segment in self.segments:
+            if segment.get("step", 0) > self.current_step:
+                continue
+            if segment.get("kind") != "stitch":
+                continue
+            if self.visible_blocks is not None and segment["blockIndex"] not in self.visible_blocks:
+                continue
+            point = self._point(segment["x2"], segment["y2"])
+            painter.setBrush(QColor(segment["color"]))
+            painter.drawEllipse(point, point_radius, point_radius)
 
     def _draw_markers(self, painter: QPainter) -> None:
         for command in self.commands:
@@ -327,6 +411,8 @@ class OpenStitchWindow(QMainWindow):
         OUTPUT_DIR.mkdir(exist_ok=True)
         self.state: DesignState | None = None
         self.thread_rows: list[ThreadRow] = []
+        self.baseline_snapshot: dict | None = None
+        self.undo_stack: list[dict] = []
         self._loading_settings = False
         self.play_timer = QTimer(self)
         self.play_timer.timeout.connect(self.advance_playback)
@@ -341,23 +427,44 @@ class OpenStitchWindow(QMainWindow):
 
     def _build_ui(self) -> None:
         self._build_menu()
-        root = QSplitter(Qt.Horizontal)
-        self.setCentralWidget(root)
 
         left = QTabWidget()
         left.setMinimumWidth(310)
         left.addTab(self._conversion_tab(), "Convert")
         left.addTab(self._library_tab(), "Library")
         left.addTab(self._inventory_tab(), "Inventory")
-        root.addWidget(left)
+        left.addTab(self._settings_tab(), "Settings")
 
         self.canvas = StitchCanvas()
-        root.addWidget(self.canvas)
+        self.canvas.on_add_stitch = self.add_manual_stitch
+        self.canvas.on_delete_stitch = self.delete_nearest_stitch
+        self.setCentralWidget(self.canvas)
 
         right = self._thread_panel()
         right.setMinimumWidth(320)
-        root.addWidget(right)
-        root.setSizes([330, 700, 330])
+        self.left_dock = QDockWidget("Workspace", self)
+        self.left_dock.setObjectName("workspaceDock")
+        self.left_dock.setWidget(left)
+        self.left_dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
+        self.left_dock.setFeatures(
+            QDockWidget.DockWidgetMovable
+            | QDockWidget.DockWidgetFloatable
+            | QDockWidget.DockWidgetClosable
+        )
+        self.addDockWidget(Qt.LeftDockWidgetArea, self.left_dock)
+
+        self.right_dock = QDockWidget("Threads", self)
+        self.right_dock.setObjectName("threadsDock")
+        self.right_dock.setWidget(right)
+        self.right_dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
+        self.right_dock.setFeatures(
+            QDockWidget.DockWidgetMovable
+            | QDockWidget.DockWidgetFloatable
+            | QDockWidget.DockWidgetClosable
+        )
+        self.addDockWidget(Qt.RightDockWidgetArea, self.right_dock)
+        self.resizeDocks([self.left_dock, self.right_dock], [330, 330], Qt.Horizontal)
+        self._build_panel_menu()
 
     def _build_menu(self) -> None:
         file_menu = self.menuBar().addMenu("&File")
@@ -375,10 +482,40 @@ class OpenStitchWindow(QMainWindow):
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
 
-        view_menu = self.menuBar().addMenu("&View")
+        self.view_menu = self.menuBar().addMenu("&View")
         reset_action = QAction("Reset Zoom", self)
         reset_action.triggered.connect(lambda: self.canvas.reset_view())
-        view_menu.addAction(reset_action)
+        self.view_menu.addAction(reset_action)
+
+    def _build_panel_menu(self) -> None:
+        self.view_menu.addSeparator()
+        self.view_menu.addAction(self.left_dock.toggleViewAction())
+        self.view_menu.addAction(self.right_dock.toggleViewAction())
+        self.view_menu.addSeparator()
+
+        float_left = QAction("Float Workspace Panel", self)
+        float_left.triggered.connect(lambda: self._float_panel(self.left_dock))
+        self.view_menu.addAction(float_left)
+        float_right = QAction("Float Threads Panel", self)
+        float_right.triggered.connect(lambda: self._float_panel(self.right_dock))
+        self.view_menu.addAction(float_right)
+
+        dock_all = QAction("Dock All Panels", self)
+        dock_all.triggered.connect(self._dock_all_panels)
+        self.view_menu.addAction(dock_all)
+
+    def _float_panel(self, dock: QDockWidget) -> None:
+        dock.show()
+        dock.setFloating(True)
+        dock.raise_()
+
+    def _dock_all_panels(self) -> None:
+        self.left_dock.setFloating(False)
+        self.right_dock.setFloating(False)
+        self.addDockWidget(Qt.LeftDockWidgetArea, self.left_dock)
+        self.addDockWidget(Qt.RightDockWidgetArea, self.right_dock)
+        self.left_dock.show()
+        self.right_dock.show()
 
     def _conversion_tab(self) -> QWidget:
         panel = QWidget()
@@ -388,6 +525,9 @@ class OpenStitchWindow(QMainWindow):
         self.fit_width.setRange(1, 300)
         self.fit_width.setValue(90)
         self.fit_width.setSuffix(" mm")
+        self.fit_width.setToolTip(
+            "Brother Duetta NV4500D design field is 180 x 300 mm, or 300 x 180 mm when rotated."
+        )
         self.fill_spacing = QDoubleSpinBox()
         self.fill_spacing.setRange(0.1, 2.0)
         self.fill_spacing.setDecimals(2)
@@ -398,8 +538,9 @@ class OpenStitchWindow(QMainWindow):
         self.max_stitch.setDecimals(1)
         self.max_stitch.setValue(3.0)
         self.max_stitch.setSuffix(" mm")
+        self.stitch_perimeter = QCheckBox("Stitch perimeter of each color block")
         self.fill_mode = QComboBox()
-        self.fill_mode.addItems(["tatami", "crosshatch", "horizontal"])
+        self.fill_mode.addItems(["mixed", "contour", "tatami", "crosshatch", "horizontal", "outline"])
         self.fill_angle = QDoubleSpinBox()
         self.fill_angle.setRange(-90, 90)
         self.fill_angle.setSingleStep(5)
@@ -417,6 +558,7 @@ class OpenStitchWindow(QMainWindow):
         form.addRow("Fit width", self.fit_width)
         form.addRow("Fill spacing", self.fill_spacing)
         form.addRow("Max stitch", self.max_stitch)
+        form.addRow("", self.stitch_perimeter)
         form.addRow("Fill mode", self.fill_mode)
         form.addRow("Fill angle", self.fill_angle)
         form.addRow("Max colors", self.max_colors)
@@ -429,6 +571,13 @@ class OpenStitchWindow(QMainWindow):
         safe_density = QPushButton("Apply Safer Density")
         safe_density.clicked.connect(self.apply_safer_density)
         layout.addWidget(safe_density)
+        optimize = QPushButton("Analyze && Optimize")
+        optimize.clicked.connect(self.analyze_and_optimize)
+        layout.addWidget(optimize)
+        self.color_preview_label = QLabel("No color blocks yet.")
+        self.color_preview_label.setWordWrap(True)
+        self.color_preview_label.setTextFormat(Qt.RichText)
+        layout.addWidget(self.color_preview_label)
         self.stats_label = QLabel("No design loaded.")
         self.stats_label.setWordWrap(True)
         self.stats_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
@@ -445,6 +594,7 @@ class OpenStitchWindow(QMainWindow):
             self.color_merge,
         ]:
             widget.valueChanged.connect(self.schedule_refresh)
+        self.stitch_perimeter.stateChanged.connect(self.toggle_perimeter_preview)
         self.max_colors.valueChanged.connect(self.schedule_refresh)
         self.pdf_page.valueChanged.connect(self.schedule_refresh)
         self.fill_mode.currentTextChanged.connect(self.schedule_refresh)
@@ -499,6 +649,28 @@ class OpenStitchWindow(QMainWindow):
         self.refresh_inventory()
         return panel
 
+    def _settings_tab(self) -> QWidget:
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+        form = QFormLayout()
+        self.units_select = QComboBox()
+        self.units_select.addItem("Metric (mm)", "metric")
+        self.units_select.addItem("SAE (inches)", "sae")
+        self.units_select.currentIndexChanged.connect(self.update_view_settings)
+        self.fabric_color_input = QLineEdit("#fbfcfa")
+        self.fabric_color_input.editingFinished.connect(self.update_view_settings)
+        fabric_button = QPushButton("Choose Fabric Color")
+        fabric_button.clicked.connect(self.choose_fabric_color)
+        form.addRow("Measurement units", self.units_select)
+        form.addRow("Fabric color", self.fabric_color_input)
+        layout.addLayout(form)
+        layout.addWidget(fabric_button)
+        hint = QLabel("These settings change the preview background and measurement grid. PES files are still generated in machine units.")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+        layout.addStretch(1)
+        return panel
+
     def _thread_panel(self) -> QWidget:
         panel = QWidget()
         layout = QVBoxLayout(panel)
@@ -512,12 +684,15 @@ class OpenStitchWindow(QMainWindow):
         self.shopping_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         layout.addWidget(self.shopping_label)
         buttons = QHBoxLayout()
+        apply_threads = QPushButton("Apply")
+        apply_threads.clicked.connect(self.apply_thread_changes)
         save = QPushButton("Save PES")
         save.clicked.connect(self.save_pes_as)
         project = QPushButton("Save Project")
         project.clicked.connect(self.save_project_as)
         email = QPushButton("Email Project")
         email.clicked.connect(self.email_project)
+        buttons.addWidget(apply_threads)
         buttons.addWidget(save)
         buttons.addWidget(project)
         buttons.addWidget(email)
@@ -539,14 +714,96 @@ class OpenStitchWindow(QMainWindow):
         self.show_markers = QCheckBox("Show trims/color changes")
         self.show_markers.setChecked(False)
         self.show_markers.stateChanged.connect(self.update_canvas_flags)
+        self.edit_stitches = QCheckBox("Edit stitches: left draw, right delete")
+        self.edit_stitches.setChecked(False)
+        self.edit_stitches.stateChanged.connect(self.update_canvas_flags)
+        edit_buttons = QHBoxLayout()
+        undo_edit = QPushButton("Undo Edit")
+        undo_edit.clicked.connect(self.undo_stitch_edit)
+        reset_edits = QPushButton("Reset Edits")
+        reset_edits.clicked.connect(self.reset_stitch_edits)
+        edit_buttons.addWidget(undo_edit)
+        edit_buttons.addWidget(reset_edits)
         control_layout.addWidget(play)
         control_layout.addWidget(self.step_label)
         control_layout.addWidget(self.step_slider)
         control_layout.addWidget(self.show_jumps)
         control_layout.addWidget(self.show_points)
         control_layout.addWidget(self.show_markers)
+        control_layout.addWidget(self.edit_stitches)
+        control_layout.addLayout(edit_buttons)
         layout.addWidget(controls)
         return panel
+
+    def choose_fabric_color(self) -> None:
+        current = QColor(self.fabric_color_input.text())
+        color = QColorDialog.getColor(current if current.isValid() else QColor("#fbfcfa"), self, "Choose Fabric Color")
+        if color.isValid():
+            self.fabric_color_input.setText(color.name())
+            self.update_view_settings()
+
+    def update_view_settings(self) -> None:
+        if not hasattr(self, "canvas"):
+            return
+        units = self.units_select.currentData() if hasattr(self, "units_select") else "metric"
+        self.canvas.set_measurement_units(str(units or "metric"))
+        color_text = self.fabric_color_input.text().strip() if hasattr(self, "fabric_color_input") else "#fbfcfa"
+        color = QColor(color_text)
+        if color.isValid():
+            self.fabric_color_input.setText(color.name())
+            self.canvas.set_background_color(color.name())
+
+    def state_snapshot(self) -> dict | None:
+        if self.state is None:
+            return None
+        return {
+            "segments": copy.deepcopy(self.state.segments),
+            "commands": copy.deepcopy(self.state.commands),
+            "color_blocks": copy.deepcopy(self.state.color_blocks),
+            "counts": copy.deepcopy(self.state.counts),
+            "bounds": tuple(self.state.bounds),
+        }
+
+    def set_baseline_snapshot(self) -> None:
+        self.baseline_snapshot = self.state_snapshot()
+        self.undo_stack.clear()
+        self._manual_stitch_anchor = None
+
+    def push_undo_snapshot(self) -> None:
+        snapshot = self.state_snapshot()
+        if snapshot is None:
+            return
+        self.undo_stack.append(snapshot)
+        if len(self.undo_stack) > 60:
+            self.undo_stack.pop(0)
+
+    def restore_snapshot(self, snapshot: dict) -> None:
+        if self.state is None:
+            return
+        self.state.segments = copy.deepcopy(snapshot["segments"])
+        self.state.commands = copy.deepcopy(snapshot["commands"])
+        self.state.color_blocks = copy.deepcopy(snapshot["color_blocks"])
+        self.state.counts = copy.deepcopy(snapshot["counts"])
+        self.state.bounds = tuple(snapshot["bounds"])
+        self._manual_stitch_anchor = None
+        self.refresh_state_view(preserve_view=True)
+
+    def reset_stitch_edits(self) -> None:
+        if self.state is None:
+            return
+        if self.baseline_snapshot is None:
+            QMessageBox.information(self, "OpenStitch", "No reset point is available yet.")
+            return
+        self.restore_snapshot(self.baseline_snapshot)
+        self.undo_stack.clear()
+
+    def undo_stitch_edit(self) -> None:
+        if self.state is None:
+            return
+        if not self.undo_stack:
+            QMessageBox.information(self, "OpenStitch", "No stitch edit to undo.")
+            return
+        self.restore_snapshot(self.undo_stack.pop())
 
     def current_settings(self) -> dict:
         return project_settings(
@@ -559,6 +816,9 @@ class OpenStitchWindow(QMainWindow):
             max_colors=self.max_colors.value(),
             color_merge_distance=self.color_merge.value(),
             pdf_page=self.pdf_page.value(),
+            display_units=self.units_select.currentData() if hasattr(self, "units_select") else "metric",
+            fabric_color=self.fabric_color_input.text().strip() if hasattr(self, "fabric_color_input") else "#fbfcfa",
+            stitch_perimeter=self.stitch_perimeter.isChecked() if hasattr(self, "stitch_perimeter") else False,
         )
 
     def apply_settings_to_controls(self, settings: dict) -> None:
@@ -576,6 +836,16 @@ class OpenStitchWindow(QMainWindow):
             self.max_colors.setValue(int(settings.get("max_colors", self.max_colors.value())))
             self.color_merge.setValue(float(settings.get("color_merge_distance", self.color_merge.value())))
             self.pdf_page.setValue(int(settings.get("pdf_page", self.pdf_page.value())))
+            units = str(settings.get("display_units", "metric"))
+            if hasattr(self, "units_select"):
+                index = self.units_select.findData(units)
+                if index >= 0:
+                    self.units_select.setCurrentIndex(index)
+            if hasattr(self, "fabric_color_input"):
+                self.fabric_color_input.setText(str(settings.get("fabric_color", "#fbfcfa")))
+                self.update_view_settings()
+            if hasattr(self, "stitch_perimeter"):
+                self.stitch_perimeter.setChecked(bool(settings.get("stitch_perimeter", False)))
         finally:
             self._loading_settings = False
 
@@ -583,16 +853,116 @@ class OpenStitchWindow(QMainWindow):
         if self._loading_settings or self.state is None:
             return
         self.stats_label.setText("Updating stitches...")
+        self.color_preview_label.setText("Updating colors...")
         self.refresh_timer.start()
+
+    def toggle_perimeter_preview(self, *args) -> None:
+        if self._loading_settings or self.state is None:
+            return
+        self.state.settings["stitch_perimeter"] = self.stitch_perimeter.isChecked()
+        base_segments = [segment for segment in self.state.segments if not segment.get("perimeter")]
+        if self.stitch_perimeter.isChecked():
+            self.state.segments = add_perimeter_segments(
+                base_segments,
+                self.state.color_blocks,
+                max_stitch_mm=float(self.state.settings["max_stitch_mm"]),
+            )
+        else:
+            self.state.segments = base_segments
+            self.recount_block_stitches()
+        self.recompute_state_after_manual_edit()
+        self.set_baseline_snapshot()
 
     def apply_safer_density(self) -> None:
         self._loading_settings = True
         try:
-            self.fill_mode.setCurrentText("tatami")
+            self.fill_mode.setCurrentText("mixed")
             self.fill_spacing.setValue(max(self.fill_spacing.value(), 0.50))
         finally:
             self._loading_settings = False
         self.schedule_refresh()
+
+    def analyze_and_optimize(self) -> None:
+        if self.state is None:
+            QMessageBox.information(self, "OpenStitch", "Open a design first.")
+            return
+        min_x, min_y, max_x, max_y = self.state.bounds
+        width_mm = max_x - min_x
+        height_mm = max_y - min_y
+        area = max(width_mm * height_mm, 0.001)
+        counts = self.state.counts
+        command_density = (
+            counts.get("needle_points", 0)
+            + counts.get("jumps", 0)
+            + counts.get("trims", 0)
+            + counts.get("color_changes", 0)
+        ) / area
+        stitch_density = counts.get("needle_points", 0) / area
+        max_stitch = float(self.max_stitch.value())
+        stitch_lengths = [
+            math.hypot(segment["x2"] - segment["x1"], segment["y2"] - segment["y1"])
+            for segment in self.state.segments
+            if segment["kind"] == "stitch"
+        ]
+        travel_lengths = [
+            math.hypot(segment["x2"] - segment["x1"], segment["y2"] - segment["y1"])
+            for segment in self.state.segments
+            if segment["kind"] != "stitch"
+        ]
+        long_stitches = sum(1 for length in stitch_lengths if length > max_stitch)
+        long_travels = sum(1 for length in travel_lengths if length > 12.0)
+        frame_note = brother_duetta_frame_note(width_mm, height_mm)
+        changes: list[str] = []
+
+        self._loading_settings = True
+        try:
+            if self.fill_mode.currentText() in {"horizontal", "outline"}:
+                self.fill_mode.setCurrentText("mixed")
+                changes.append("changed fill mode to mixed for a less directional fill")
+            if command_density > 2.4:
+                new_spacing = min(2.0, max(self.fill_spacing.value() + 0.10, 0.50))
+                if new_spacing != self.fill_spacing.value():
+                    self.fill_spacing.setValue(new_spacing)
+                    changes.append(f"increased fill spacing to {new_spacing:.2f} mm to reduce saturation")
+            elif stitch_density < 1.2 and self.fill_spacing.value() > 0.25:
+                new_spacing = max(0.25, self.fill_spacing.value() - 0.05)
+                if new_spacing != self.fill_spacing.value():
+                    self.fill_spacing.setValue(new_spacing)
+                    changes.append(f"reduced fill spacing to {new_spacing:.2f} mm to add definition")
+            if frame_note.startswith("Exceeds") and self.fit_width.value():
+                normal_scale = min(
+                    BROTHER_DUETTA_MAX_WIDTH_MM / max(width_mm, 0.001),
+                    BROTHER_DUETTA_MAX_HEIGHT_MM / max(height_mm, 0.001),
+                )
+                rotated_scale = min(
+                    BROTHER_DUETTA_MAX_HEIGHT_MM / max(width_mm, 0.001),
+                    BROTHER_DUETTA_MAX_WIDTH_MM / max(height_mm, 0.001),
+                )
+                scale = max(normal_scale, rotated_scale)
+                if 0 < scale < 1:
+                    new_width = max(1.0, self.fit_width.value() * scale * 0.98)
+                    self.fit_width.setValue(new_width)
+                    changes.append(f"reduced fit width to {new_width:.1f} mm so the design can fit the Duetta field")
+        finally:
+            self._loading_settings = False
+
+        analysis = [
+            f"Machine fit: {frame_note}",
+            f"Stitches: {counts.get('needle_points', 0)}",
+            f"Long stitch spans over {max_stitch:.1f} mm: {long_stitches}",
+            f"Long travel/jump spans over 12.0 mm: {long_travels}",
+            f"Density: {stitch_density:.2f} st/mm2, {command_density:.2f} commands/mm2",
+            f"Estimated stitch time: {estimate_stitch_time(counts, self.state.color_blocks)}",
+        ]
+        if changes:
+            self.schedule_refresh()
+            analysis.append("")
+            analysis.append("Applied:")
+            analysis.extend(f"- {change}" for change in changes)
+        else:
+            analysis.append("")
+            analysis.append("No automatic setting changes were needed.")
+        QMessageBox.information(self, "OpenStitch Analyzer", "\n".join(analysis))
 
     def refresh_current_design(self) -> None:
         if self.state is None:
@@ -686,7 +1056,7 @@ class OpenStitchWindow(QMainWindow):
                 max_stitch_mm=float(settings["max_stitch_mm"]),
             )
             thread_metadata_path(pes_path).write_text(json.dumps({"blocks": written}, indent=2), encoding="utf-8")
-            summary = project_summary_text(working_source, settings, bounds, counts)
+            summary = project_summary_text(working_source, settings, bounds, counts, segments, blocks)
             project_path.with_suffix(".summary.txt").write_text(summary, encoding="utf-8")
             write_project_file(project_path, working_source, settings, summary)
         else:
@@ -717,7 +1087,9 @@ class OpenStitchWindow(QMainWindow):
         self.step_slider.setValue(counts.get("needle_points", 0))
         self.update_stats()
         self.populate_threads()
+        self.update_color_block_preview()
         self.refresh_library()
+        self.set_baseline_snapshot()
 
     def collect_design(self, path: Path, settings: dict) -> tuple[list[dict], list[dict], list[dict], dict]:
         suffix = path.suffix.lower()
@@ -754,7 +1126,16 @@ class OpenStitchWindow(QMainWindow):
             segments, commands, blocks, counts = result
             segments, blocks = apply_thread_metadata(path, segments, blocks)
             result = segments, commands, blocks, counts
-        return group_color_blocks_by_inventory(*result)
+        segments, commands, blocks, counts = group_color_blocks_by_inventory(*result)
+        if settings.get("stitch_perimeter"):
+            segments = add_perimeter_segments(
+                segments,
+                blocks,
+                max_stitch_mm=float(settings["max_stitch_mm"]),
+            )
+            counts["needle_points"] = sum(1 for segment in segments if segment["kind"] == "stitch")
+            counts["stitch_segments"] = counts["needle_points"]
+        return segments, commands, blocks, counts
 
     def update_stats(self) -> None:
         if self.state is None:
@@ -776,6 +1157,16 @@ class OpenStitchWindow(QMainWindow):
             and 0 < math.hypot(segment["x2"] - segment["x1"], segment["y2"] - segment["y1"]) < 0.3
         )
         quality_notes: list[str] = []
+        width_mm = max_x - min_x
+        height_mm = max_y - min_y
+        frame_note = brother_duetta_frame_note(width_mm, height_mm)
+        if frame_note.startswith("Exceeds"):
+            quality_notes.append(frame_note)
+        elif (
+            width_mm > BROTHER_DUETTA_MAX_WIDTH_MM * 0.9
+            or height_mm > BROTHER_DUETTA_MAX_HEIGHT_MM * 0.9
+        ):
+            quality_notes.append(f"Near machine limit. {frame_note}")
         if command_density > 2.4:
             quality_notes.append(
                 "High saturation risk. Try Apply Safer Density or increase fill spacing."
@@ -783,9 +1174,12 @@ class OpenStitchWindow(QMainWindow):
         if micro_segments:
             quality_notes.append(f"{micro_segments} preview stitch segments are under 0.30 mm.")
         quality_text = "\n".join(quality_notes) if quality_notes else "Quality checks: no obvious density warning."
+        fill_types = classify_fill_types(self.state.segments, self.state.color_blocks)
         self.stats_label.setText(
             f"{self.state.working_source.name}\n"
-            f"Size: {max_x - min_x:.1f} x {max_y - min_y:.1f} mm\n"
+            f"Size: {width_mm:.1f} x {height_mm:.1f} mm\n"
+            f"Machine fit: {frame_note}\n"
+            f"Fill types: {fill_types['summary']}\n"
             f"Needle points: {counts.get('needle_points', 0)}\n"
             f"Jumps: {counts.get('jumps', 0)}  Trims: {counts.get('trims', 0)}  "
             f"Color changes: {counts.get('color_changes', 0)}\n"
@@ -793,6 +1187,32 @@ class OpenStitchWindow(QMainWindow):
             f"Estimated stitch time: {estimate_stitch_time(counts, self.state.color_blocks)}\n"
             f"PES: {self.state.pes_path.name}\n"
             f"{quality_text}"
+        )
+
+    def update_color_block_preview(self) -> None:
+        if self.state is None:
+            self.color_preview_label.setText("No color blocks yet.")
+            return
+        blocks = self.state.color_blocks
+        if not blocks:
+            self.color_preview_label.setText("No color blocks yet.")
+            return
+        swatches = []
+        for block in blocks[:16]:
+            color = html.escape(block["color"])
+            label = html.escape(str(block.get("label", color)))
+            stitches = int(block.get("stitches", 0))
+            swatches.append(
+                "<span style='white-space:nowrap; margin-right:8px;'>"
+                f"<span style='display:inline-block; width:18px; height:18px; "
+                f"background:{color}; border:1px solid #6d7871; vertical-align:middle;'></span> "
+                f"{color} <small>({stitches})</small>"
+                f"<span title='{label}'></span>"
+                "</span>"
+            )
+        more = f" +{len(blocks) - 16} more" if len(blocks) > 16 else ""
+        self.color_preview_label.setText(
+            f"<b>Color blocks: {len(blocks)}</b>{html.escape(more)}<br>{''.join(swatches)}"
         )
 
     def populate_threads(self) -> None:
@@ -820,6 +1240,139 @@ class OpenStitchWindow(QMainWindow):
         self.canvas.set_visible_blocks(self.selected_blocks())
         self.canvas.update()
         self.update_shopping_list()
+        self.update_color_block_preview()
+
+    def apply_thread_changes(self) -> None:
+        if self.state is None:
+            QMessageBox.information(self, "OpenStitch", "Open a design first.")
+            return
+        selected_rows = [row for row in self.thread_rows if row.checkbox.isChecked()]
+        if not selected_rows:
+            QMessageBox.warning(self, "OpenStitch", "Select at least one thread color to keep.")
+            return
+
+        old_to_new: dict[int, int] = {}
+        color_to_new: dict[str, int] = {}
+        new_blocks: list[dict] = []
+        dropped_blocks = {row.block["index"] for row in self.thread_rows if not row.checkbox.isChecked()}
+
+        for row in selected_rows:
+            old_block = row.block
+            color = normalize_hex(old_block["color"])
+            label = old_block.get("label", color)
+            if color not in color_to_new:
+                color_to_new[color] = len(new_blocks)
+                new_blocks.append(
+                    {
+                        "index": len(new_blocks),
+                        "thread": len(new_blocks),
+                        "color": color,
+                        "label": label,
+                        "stitches": 0,
+                    }
+                )
+            new_index = color_to_new[color]
+            old_to_new[old_block["index"]] = new_index
+            if label and label not in new_blocks[new_index].get("label", ""):
+                if new_blocks[new_index].get("label") in {"", color}:
+                    new_blocks[new_index]["label"] = label
+                else:
+                    new_blocks[new_index]["label"] += f" / {label}"
+
+        new_segments: list[dict] = []
+        for segment in self.state.segments:
+            old_index = segment["blockIndex"]
+            if old_index not in old_to_new:
+                continue
+            new_index = old_to_new[old_index]
+            new_segment = dict(segment)
+            new_segment["blockIndex"] = new_index
+            new_segment["colorIndex"] = new_index
+            new_segment["color"] = new_blocks[new_index]["color"]
+            if new_segment["kind"] == "stitch":
+                new_blocks[new_index]["stitches"] += 1
+            new_segments.append(new_segment)
+
+        new_commands: list[dict] = []
+        for command in self.state.commands:
+            if command.get("command") == "color_change":
+                continue
+            old_color = command.get("color")
+            if isinstance(old_color, int):
+                if old_color in dropped_blocks:
+                    continue
+                if old_color in old_to_new:
+                    new_command = dict(command)
+                    new_command["color"] = old_to_new[old_color]
+                    new_commands.append(new_command)
+                    continue
+            new_commands.append(dict(command))
+        previous_block: int | None = None
+        for segment in new_segments:
+            block_index = segment["blockIndex"]
+            if previous_block is not None and block_index != previous_block:
+                new_commands.append(
+                    {
+                        "x": segment["x1"],
+                        "y": segment["y1"],
+                        "command": "color_change",
+                        "color": block_index,
+                        "step": segment.get("step", 0),
+                    }
+                )
+            previous_block = block_index
+
+        if not new_segments:
+            QMessageBox.warning(self, "OpenStitch", "No stitches remain after applying thread changes.")
+            return
+
+        counts = dict(self.state.counts)
+        counts["needle_points"] = sum(1 for segment in new_segments if segment["kind"] == "stitch")
+        counts["stitch_segments"] = counts["needle_points"]
+        counts["jumps"] = sum(1 for segment in new_segments if segment["kind"] != "stitch")
+        counts["trims"] = sum(1 for command in new_commands if command.get("command") == "trim")
+        counts["color_changes"] = max(0, len(new_blocks) - 1)
+
+        bounds = design_bounds(new_segments, new_commands)
+        rendered_pes = self.state.pes_path.with_name(f"{self.state.pes_path.stem}_applied_{uuid.uuid4().hex[:10]}.pes")
+        written = write_segments_as_pes(
+            new_segments,
+            new_blocks,
+            rendered_pes,
+            max_stitch_mm=float(self.state.settings["max_stitch_mm"]),
+        )
+        thread_metadata_path(rendered_pes).write_text(json.dumps({"blocks": written}, indent=2), encoding="utf-8")
+        self.state = DesignState(
+            source_path=rendered_pes,
+            working_source=rendered_pes,
+            pes_path=rendered_pes,
+            project_path=rendered_pes.with_suffix(PROJECT_SUFFIX),
+            settings=self.state.settings,
+            segments=new_segments,
+            commands=new_commands,
+            color_blocks=new_blocks,
+            counts=counts,
+            bounds=bounds,
+        )
+        zoom = self.canvas.zoom
+        pan = QPointF(self.canvas.pan)
+        self.canvas.set_design(new_segments, new_commands, bounds)
+        self.canvas.zoom = zoom
+        self.canvas.pan = pan
+        self.step_slider.setRange(0, counts.get("needle_points", 0))
+        self.step_slider.setValue(counts.get("needle_points", 0))
+        self.populate_threads()
+        self.update_stats()
+        self.update_color_block_preview()
+        self.canvas.update()
+        self.set_baseline_snapshot()
+        merged_count = len(selected_rows) - len(new_blocks)
+        dropped_count = len(dropped_blocks)
+        QMessageBox.information(
+            self,
+            "OpenStitch",
+            f"Applied thread changes. Dropped {dropped_count} color block(s), merged {merged_count} like-color block(s).",
+        )
 
     def selected_blocks(self) -> set[int]:
         return {row.block["index"] for row in self.thread_rows if row.checkbox.isChecked()}
@@ -875,6 +1428,8 @@ class OpenStitchWindow(QMainWindow):
                 self.state.settings,
                 self.state.bounds,
                 self.state.counts,
+                self.state.segments,
+                self.state.color_blocks,
             )
             write_project_file(Path(target), self.state.working_source, self.state.settings, summary)
             Path(target).with_suffix(".summary.txt").write_text(summary, encoding="utf-8")
@@ -981,6 +1536,8 @@ class OpenStitchWindow(QMainWindow):
                 self.state.settings,
                 self.state.bounds,
                 self.state.counts,
+                self.state.segments,
+                self.state.color_blocks,
             )
         with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
             archive.write(self.state.pes_path, arcname=self.state.pes_path.name)
@@ -1041,7 +1598,133 @@ class OpenStitchWindow(QMainWindow):
         self.canvas.show_jumps = self.show_jumps.isChecked()
         self.canvas.show_points = self.show_points.isChecked()
         self.canvas.show_markers = self.show_markers.isChecked()
+        self.canvas.set_edit_mode(self.edit_stitches.isChecked())
         self.canvas.update()
+
+    def active_edit_block(self) -> dict | None:
+        if self.state is None or not self.state.color_blocks:
+            return None
+        for row in getattr(self, "thread_rows", []):
+            if row.checkbox.isChecked():
+                return row.block
+        return self.state.color_blocks[0]
+
+    def add_manual_stitch(self, point: tuple[float, float]) -> None:
+        if self.state is None:
+            return
+        block = self.active_edit_block()
+        if block is None:
+            return
+        anchor = getattr(self, "_manual_stitch_anchor", None)
+        self._manual_stitch_anchor = point
+        if anchor is None:
+            self.stats_label.setText(self.stats_label.text() + "\nManual stitch start set.")
+            return
+        self.push_undo_snapshot()
+        step = max((segment.get("step", 0) for segment in self.state.segments), default=0) + 1
+        segment = {
+            "x1": anchor[0],
+            "y1": anchor[1],
+            "x2": point[0],
+            "y2": point[1],
+            "kind": "stitch",
+            "color": block["color"],
+            "colorIndex": block.get("thread", block["index"]),
+            "blockIndex": block["index"],
+            "step": step,
+        }
+        self.state.segments.append(segment)
+        block["stitches"] = int(block.get("stitches", 0)) + 1
+        self.state.commands.append(
+            {
+                "x": point[0],
+                "y": point[1],
+                "command": "stitch",
+                "color": block["index"],
+                "step": step,
+            }
+        )
+        self.recompute_state_after_manual_edit()
+
+    def delete_nearest_stitch(self, point: tuple[float, float]) -> None:
+        if self.state is None:
+            return
+        best_index = None
+        best_distance = float("inf")
+        for index, segment in enumerate(self.state.segments):
+            if segment.get("kind") != "stitch":
+                continue
+            distance = self._distance_to_segment(
+                point,
+                (segment["x1"], segment["y1"]),
+                (segment["x2"], segment["y2"]),
+            )
+            if distance < best_distance:
+                best_distance = distance
+                best_index = index
+        if best_index is None or best_distance > 1.5:
+            return
+        self.push_undo_snapshot()
+        removed = self.state.segments.pop(best_index)
+        for block in self.state.color_blocks:
+            if block["index"] == removed.get("blockIndex"):
+                block["stitches"] = max(0, int(block.get("stitches", 0)) - 1)
+                break
+        self._manual_stitch_anchor = None
+        self.recompute_state_after_manual_edit()
+
+    def recompute_state_after_manual_edit(self) -> None:
+        if self.state is None:
+            return
+        self.recount_block_stitches()
+        counts = dict(self.state.counts)
+        counts["needle_points"] = sum(1 for segment in self.state.segments if segment["kind"] == "stitch")
+        counts["stitch_segments"] = counts["needle_points"]
+        counts["jumps"] = sum(1 for segment in self.state.segments if segment["kind"] != "stitch")
+        self.state.counts = counts
+        self.state.bounds = design_bounds(self.state.segments, self.state.commands)
+        self.refresh_state_view(preserve_view=True)
+
+    def refresh_state_view(self, preserve_view: bool = True) -> None:
+        if self.state is None:
+            return
+        zoom = self.canvas.zoom
+        pan = QPointF(self.canvas.pan)
+        self.canvas.set_design(self.state.segments, self.state.commands, self.state.bounds)
+        if preserve_view:
+            self.canvas.zoom = zoom
+            self.canvas.pan = pan
+        self.step_slider.setRange(0, self.state.counts.get("needle_points", 0))
+        self.step_slider.setValue(self.state.counts.get("needle_points", 0))
+        self.populate_threads()
+        self.canvas.set_visible_blocks(self.selected_blocks())
+        self.update_stats()
+        self.update_shopping_list()
+        self.update_color_block_preview()
+
+    def recount_block_stitches(self) -> None:
+        if self.state is None:
+            return
+        counts_by_block = {block["index"]: 0 for block in self.state.color_blocks}
+        for segment in self.state.segments:
+            if segment.get("kind") == "stitch" and segment.get("blockIndex") in counts_by_block:
+                counts_by_block[segment["blockIndex"]] += 1
+        for block in self.state.color_blocks:
+            block["stitches"] = counts_by_block.get(block["index"], 0)
+
+    def _distance_to_segment(
+        self,
+        point: tuple[float, float],
+        start: tuple[float, float],
+        end: tuple[float, float],
+    ) -> float:
+        dx = end[0] - start[0]
+        dy = end[1] - start[1]
+        if dx == 0 and dy == 0:
+            return math.hypot(point[0] - start[0], point[1] - start[1])
+        t = max(0.0, min(1.0, ((point[0] - start[0]) * dx + (point[1] - start[1]) * dy) / (dx * dx + dy * dy)))
+        nearest = (start[0] + dx * t, start[1] + dy * t)
+        return math.hypot(point[0] - nearest[0], point[1] - nearest[1])
 
     def toggle_playback(self) -> None:
         if self.play_timer.isActive():

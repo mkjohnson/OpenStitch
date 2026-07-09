@@ -16,7 +16,14 @@ from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 from image_digitizer import is_raster_source
-from pes_viewer import build_viewer_html, positive_float, write_filtered_pes, write_image_as_pes, write_svg_as_pes
+from pes_viewer import (
+    build_viewer_html,
+    classify_fill_types,
+    positive_float,
+    write_filtered_pes,
+    write_image_as_pes,
+    write_svg_as_pes,
+)
 from thread_settings import DEFAULT_THREAD_WEIGHT, normalize_thread_weight, recommended_fill_spacing
 from thread_inventory import add_inventory_item, delete_inventory_item, load_inventory, normalize_hex
 
@@ -29,6 +36,14 @@ TEMPLATE_DIR = RESOURCE_DIR / "templates"
 STATIC_DIR = RESOURCE_DIR / "static"
 MIN_BROTHER_STITCH_MM = 0.5
 MAX_BROTHER_EMBROIDERY_STITCH_MM = 7.0
+BROTHER_DUETTA_MAX_HEIGHT_MM = 300.0
+BROTHER_DUETTA_MAX_WIDTH_MM = 180.0
+BROTHER_DUETTA_FRAMES = [
+    ("small frame", 60.0, 20.0),
+    ("medium frame", 100.0, 100.0),
+    ("large frame", 130.0, 180.0),
+    ("extra large frame", 180.0, 300.0),
+]
 
 
 def safe_name(name: str) -> str:
@@ -43,6 +58,24 @@ def render_template(name: str, **context: str) -> bytes:
     for key, value in context.items():
         text = text.replace("{{" + key + "}}", value)
     return text.encode("utf-8")
+
+
+def brother_duetta_frame_note(width_mm: float, height_mm: float) -> str:
+    """Return the smallest Duetta frame that can hold the design, or a warning."""
+    normal_width = width_mm <= BROTHER_DUETTA_MAX_WIDTH_MM and height_mm <= BROTHER_DUETTA_MAX_HEIGHT_MM
+    rotated_width = width_mm <= BROTHER_DUETTA_MAX_HEIGHT_MM and height_mm <= BROTHER_DUETTA_MAX_WIDTH_MM
+    if not (normal_width or rotated_width):
+        return (
+            "Exceeds Brother Duetta design field "
+            f"({BROTHER_DUETTA_MAX_WIDTH_MM:.0f} x {BROTHER_DUETTA_MAX_HEIGHT_MM:.0f} mm, "
+            "or rotated)."
+        )
+    for name, frame_width, frame_height in BROTHER_DUETTA_FRAMES:
+        if width_mm <= frame_width and height_mm <= frame_height:
+            return f"Fits Brother Duetta {name} ({frame_width:.0f} x {frame_height:.0f} mm)."
+        if width_mm <= frame_height and height_mm <= frame_width:
+            return f"Fits Brother Duetta {name} if rotated ({frame_height:.0f} x {frame_width:.0f} mm)."
+    return "Fits Brother Duetta extra large frame if rotated."
 
 
 def parse_max_stitch(form: cgi.FieldStorage, default: float = 3.0) -> float:
@@ -85,7 +118,12 @@ def project_settings(
     max_colors: int,
     color_merge_distance: float,
     pdf_page: int,
+    display_units: str = "metric",
+    fabric_color: str = "#fbfcfa",
+    stitch_perimeter: bool = False,
 ) -> dict:
+    display_units = "sae" if display_units == "sae" else "metric"
+    fabric_color = fabric_color if re.match(r"^#[0-9A-Fa-f]{6}$", fabric_color or "") else "#fbfcfa"
     return {
         "fit_width_mm": fit_width,
         "fill_spacing_mm": fill_spacing,
@@ -96,6 +134,9 @@ def project_settings(
         "max_colors": max_colors,
         "color_merge_distance": color_merge_distance,
         "pdf_page": pdf_page,
+        "display_units": display_units,
+        "fabric_color": fabric_color,
+        "stitch_perimeter": bool(stitch_perimeter),
     }
 
 
@@ -128,13 +169,28 @@ def estimate_time_text(counts: dict) -> str:
     return f"{seconds} sec"
 
 
-def project_summary_text(source_path: Path, settings: dict, bounds: tuple[float, float, float, float], counts: dict) -> str:
+def project_summary_text(
+    source_path: Path,
+    settings: dict,
+    bounds: tuple[float, float, float, float],
+    counts: dict,
+    segments: list[dict] | None = None,
+    color_blocks: list[dict] | None = None,
+) -> str:
     min_x, min_y, max_x, max_y = bounds
+    width_mm = max_x - min_x
+    height_mm = max_y - min_y
+    frame_note = brother_duetta_frame_note(width_mm, height_mm)
+    fill_types = "Unknown"
+    if segments is not None and color_blocks is not None:
+        fill_types = classify_fill_types(segments, color_blocks)["summary"]
     lines = [
         "OpenStitch project summary",
         "",
         f"Design: {source_path.name}",
-        f"Size: {max_x - min_x:.1f} x {max_y - min_y:.1f} mm",
+        f"Size: {width_mm:.1f} x {height_mm:.1f} mm",
+        f"Machine fit: {frame_note}",
+        f"Fill types: {fill_types}",
         f"Estimated stitch time: {estimate_time_text(counts)}",
         "",
         "Stitch metrics",
@@ -154,6 +210,9 @@ def project_summary_text(source_path: Path, settings: dict, bounds: tuple[float,
         f"Max colors: {settings.get('max_colors')}",
         f"Color flattening: {settings.get('color_merge_distance')}",
         f"PDF page: {settings.get('pdf_page')}",
+        f"Display units: {settings.get('display_units', 'metric')}",
+        f"Preview fabric color: {settings.get('fabric_color', '#fbfcfa')}",
+        f"Stitch color-block perimeter: {'yes' if settings.get('stitch_perimeter') else 'no'}",
         "",
     ]
     return "\n".join(lines)
@@ -192,12 +251,15 @@ def coerce_project_settings(settings: dict) -> dict:
     if max_stitch < MIN_BROTHER_STITCH_MM or max_stitch > MAX_BROTHER_EMBROIDERY_STITCH_MM:
         raise ValueError("Project max stitch length must be between 0.5 and 7.0 mm")
     fill_mode = str(settings.get("fill_mode") or "tatami")
-    if fill_mode not in {"tatami", "horizontal", "crosshatch"}:
+    if fill_mode not in {"tatami", "horizontal", "crosshatch", "mixed", "outline", "contour"}:
         fill_mode = "tatami"
     fill_angle_deg = float(settings.get("fill_angle_deg", 45.0))
     max_colors = int(settings.get("max_colors", 6))
     color_merge_distance = float(settings.get("color_merge_distance", 56.0))
     pdf_page = int(settings.get("pdf_page", 1))
+    display_units = str(settings.get("display_units") or "metric")
+    fabric_color = str(settings.get("fabric_color") or "#fbfcfa")
+    stitch_perimeter = bool(settings.get("stitch_perimeter", False))
     fit_width = settings.get("fit_width_mm", 90.0)
     fit_width = None if fit_width in {"", None} else float(fit_width)
     if fit_width is not None and fit_width <= 0:
@@ -212,6 +274,9 @@ def coerce_project_settings(settings: dict) -> dict:
         max_colors=max_colors,
         color_merge_distance=color_merge_distance,
         pdf_page=pdf_page,
+        display_units=display_units,
+        fabric_color=fabric_color,
+        stitch_perimeter=stitch_perimeter,
     )
 
 
@@ -396,7 +461,11 @@ class ViewerHandler(SimpleHTTPRequestHandler):
         max_colors = settings["max_colors"]
         color_merge_distance = settings["color_merge_distance"]
         pdf_page = settings["pdf_page"]
+        display_units = settings.get("display_units", "metric")
+        fabric_color = settings.get("fabric_color", "#fbfcfa")
+        stitch_perimeter = bool(settings.get("stitch_perimeter", False))
         pes_href = None
+        viewer_source = source_path
         if source_path.suffix.lower() == ".svg":
             write_svg_as_pes(
                 source_path,
@@ -410,8 +479,10 @@ class ViewerHandler(SimpleHTTPRequestHandler):
                 max_colors=max_colors,
                 color_merge_distance=color_merge_distance,
                 pdf_page=pdf_page,
+                stitch_perimeter=stitch_perimeter,
             )
             pes_href = pes_path.name
+            viewer_source = pes_path
         elif is_raster_source(source_path):
             write_image_as_pes(
                 source_path,
@@ -425,12 +496,15 @@ class ViewerHandler(SimpleHTTPRequestHandler):
                 max_colors=max_colors,
                 color_merge_distance=color_merge_distance,
                 pdf_page=pdf_page,
+                stitch_perimeter=stitch_perimeter,
             )
             pes_href = pes_path.name
+            viewer_source = pes_path
         elif source_path.suffix.lower() == ".pes":
             pes_href = source_path.name
+            viewer_source = source_path
         html_text, bounds, counts = build_viewer_html(
-            source_path,
+            viewer_source,
             fit_width_mm=fit_width,
             fill_mode=fill_mode,
             fill_angle_deg=fill_angle_deg,
@@ -443,12 +517,15 @@ class ViewerHandler(SimpleHTTPRequestHandler):
             pes_href=pes_href,
             project_href=project_path.name,
             color_export_action="/recreate-pes",
-            source_name=source_path.name,
+            source_name=viewer_source.name,
+            display_units=display_units,
+            fabric_color=fabric_color,
         )
         html_path.write_text(html_text, encoding="utf-8")
-        summary_text = project_summary_text(source_path, settings, bounds, counts)
+        project_source = viewer_source
+        summary_text = project_summary_text(project_source, settings, bounds, counts)
         project_path.with_suffix(".summary.txt").write_text(summary_text, encoding="utf-8")
-        write_project_file(project_path, source_path, settings, summary_text)
+        write_project_file(project_path, project_source, settings, summary_text)
 
     def serve_static(self, request_path: str) -> None:
         relative = unquote(request_path.removeprefix("/static/"))
@@ -547,8 +624,8 @@ class ViewerHandler(SimpleHTTPRequestHandler):
             self.send_app_error(str(error))
             return
         fill_mode = form["fill_mode"].value if "fill_mode" in form and form["fill_mode"].value else "tatami"
-        if fill_mode not in {"tatami", "horizontal", "crosshatch"}:
-            self.send_app_error("Fill mode must be Tatami, Crosshatch, or Horizontal")
+        if fill_mode not in {"tatami", "horizontal", "crosshatch", "mixed", "outline", "contour"}:
+            self.send_app_error("Fill mode must be Mixed, Contour, Tatami, Crosshatch, Horizontal, or Outline")
             return
         try:
             max_colors = int(form["max_colors"].value) if "max_colors" in form and form["max_colors"].value else 6
@@ -574,6 +651,9 @@ class ViewerHandler(SimpleHTTPRequestHandler):
         if pdf_page < 1:
             self.send_app_error("PDF page must be 1 or greater")
             return
+        display_units = form["display_units"].value if "display_units" in form and form["display_units"].value else "metric"
+        fabric_color = form["fabric_color"].value if "fabric_color" in form and form["fabric_color"].value else "#fbfcfa"
+        stitch_perimeter = "stitch_perimeter" in form and form["stitch_perimeter"].value not in {"", "0", "false", "False"}
 
         name = safe_name(upload.filename)
         job_id = uuid.uuid4().hex[:10]
@@ -593,6 +673,9 @@ class ViewerHandler(SimpleHTTPRequestHandler):
             max_colors=max_colors,
             color_merge_distance=color_merge_distance,
             pdf_page=pdf_page,
+            display_units=display_units,
+            fabric_color=fabric_color,
+            stitch_perimeter=stitch_perimeter,
         )
         try:
             self.render_design_files(uploaded_path, html_path, pes_path, project_path, settings)
@@ -685,8 +768,8 @@ class ViewerHandler(SimpleHTTPRequestHandler):
             self.send_app_error(str(error))
             return
         fill_mode = form["fill_mode"].value if "fill_mode" in form and form["fill_mode"].value else "tatami"
-        if fill_mode not in {"tatami", "horizontal", "crosshatch"}:
-            self.send_app_error("Fill mode must be Tatami, Crosshatch, or Horizontal")
+        if fill_mode not in {"tatami", "horizontal", "crosshatch", "mixed", "outline", "contour"}:
+            self.send_app_error("Fill mode must be Mixed, Contour, Tatami, Crosshatch, Horizontal, or Outline")
             return
         try:
             max_colors = int(form["max_colors"].value) if "max_colors" in form and form["max_colors"].value else 6
@@ -706,6 +789,7 @@ class ViewerHandler(SimpleHTTPRequestHandler):
         if fill_angle_deg < -90 or fill_angle_deg > 90:
             self.send_app_error("Fill angle must be between -90 and 90 degrees")
             return
+        stitch_perimeter = "stitch_perimeter" in form and form["stitch_perimeter"].value not in {"", "0", "false", "False"}
 
         selected_label = "-".join(str(index + 1) for index in sorted(selected_blocks))
         job_id = uuid.uuid4().hex[:10]
@@ -722,6 +806,7 @@ class ViewerHandler(SimpleHTTPRequestHandler):
             max_colors=max_colors,
             color_merge_distance=color_merge_distance,
             pdf_page=pdf_page,
+            stitch_perimeter=stitch_perimeter,
         )
         try:
             write_filtered_pes(
@@ -740,6 +825,7 @@ class ViewerHandler(SimpleHTTPRequestHandler):
                 max_colors=max_colors,
                 color_merge_distance=color_merge_distance,
                 pdf_page=pdf_page,
+                stitch_perimeter=stitch_perimeter,
             )
             html_text, bounds, counts = build_viewer_html(
                 output_path,
@@ -750,6 +836,7 @@ class ViewerHandler(SimpleHTTPRequestHandler):
                 fill_spacing_mm=fill_spacing,
                 thread_weight=thread_weight,
                 max_stitch_mm=max_stitch,
+                stitch_perimeter=stitch_perimeter,
             )
             summary_text = project_summary_text(output_path, settings, bounds, counts)
             project_path.with_suffix(".summary.txt").write_text(summary_text, encoding="utf-8")

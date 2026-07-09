@@ -309,14 +309,16 @@ def image_to_segments(
     fill_mode: str = "tatami",
     fill_angle_deg: float = 45.0,
     fill_spacing_mm: float = 0.5,
-    min_run_mm: float = 0.35,
+    min_run_mm: float = 0.5,
     background_threshold: int = 245,
     color_merge_distance: float = 56.0,
     max_stitch_mm: float = 3.0,
+    trim_after_mm: float = 12.0,
+    detail_px_per_mm: float = 8.0,
     pdf_page: int = 1,
     pdf_dpi: int = 180,
 ) -> tuple[list[dict], list[dict], list[dict], dict]:
-    px_per_mm = 1 / max(fill_spacing_mm, 0.1)
+    px_per_mm = max(detail_px_per_mm, 1 / max(fill_spacing_mm, 0.1))
     image = load_raster_source(source_file, pdf_page=pdf_page, pdf_dpi=pdf_dpi)
     image = trim_transparent_or_white(image)
     image = resize_for_fit(image, fit_width_mm, fit_height_mm, px_per_mm)
@@ -331,8 +333,9 @@ def image_to_segments(
     origin_x = -width_mm / 2
     origin_y = -height_mm / 2
     min_run_px = max(1, int(math.ceil(min_run_mm * px_per_mm)))
+    row_step_px = max(1, int(math.floor(fill_spacing_mm * px_per_mm)))
     fill_mode = fill_mode.lower().strip()
-    if fill_mode not in {"horizontal", "tatami", "crosshatch"}:
+    if fill_mode not in {"horizontal", "tatami", "crosshatch", "mixed", "outline", "contour"}:
         fill_mode = "tatami"
     background_fill_index = next(
         (index for index, color in enumerate(colors) if is_background_color(color, background_threshold)),
@@ -340,6 +343,62 @@ def image_to_segments(
     )
     source_cx = (image.width - 1) / 2
     source_cy = (image.height - 1) / 2
+    def raster_fill_angle_candidates(base_angle: float) -> list[float]:
+        if fill_mode == "horizontal":
+            return [0.0]
+        if fill_mode != "mixed":
+            return [base_angle]
+        seen: set[float] = set()
+        candidates: list[float] = []
+        for offset in (0, -5, 5, -10, 10, -15, 15, -22.5, 22.5, -30, 30, -45, 45, 90):
+            angle = ((base_angle + offset + 90) % 180) - 90
+            rounded = round(angle, 3)
+            if rounded not in seen:
+                seen.add(rounded)
+                candidates.append(angle)
+        return candidates
+
+    def score_raster_angle(palette_index: int, stitch_angle: float) -> tuple[int, int, int, float]:
+        working_image = palette_image
+        if abs(stitch_angle) > 0.001:
+            working_image = palette_image.rotate(
+                stitch_angle,
+                resample=Image.Resampling.NEAREST,
+                expand=True,
+                fillcolor=background_fill_index,
+            )
+        pixels = working_image.load()
+        working_width, working_height = working_image.size
+        short_remainders = 0
+        run_count = 0
+        stitch_estimate = 0
+        for row in range(0, working_height, row_step_px):
+            start: int | None = None
+            for col in range(working_width):
+                if pixels[col, row] == palette_index:
+                    if start is None:
+                        start = col
+                elif start is not None:
+                    span = col - start
+                    if span >= min_run_px:
+                        run_count += 1
+                        stitch_estimate += max(1, int(math.ceil((span / px_per_mm) / max(max_stitch_mm, 0.1))))
+                        if span < min_run_px * 1.5:
+                            short_remainders += 1
+                    start = None
+            if start is not None:
+                span = working_width - start
+                if span >= min_run_px:
+                    run_count += 1
+                    stitch_estimate += max(1, int(math.ceil((span / px_per_mm) / max(max_stitch_mm, 0.1))))
+                    if span < min_run_px * 1.5:
+                        short_remainders += 1
+        return short_remainders, -run_count, stitch_estimate, abs(stitch_angle - fill_angle_deg)
+
+    def best_raster_angle(palette_index: int) -> float:
+        candidates = raster_fill_angle_candidates(fill_angle_deg)
+        return min(candidates, key=lambda angle: score_raster_angle(palette_index, angle))
+
     stitch_angles = [0.0] if fill_mode == "horizontal" else [fill_angle_deg]
     if fill_mode == "crosshatch":
         stitch_angles.append(-fill_angle_deg if abs(fill_angle_deg) > 0.001 else 90.0)
@@ -390,6 +449,8 @@ def image_to_segments(
     ) -> None:
         nonlocal previous_point, pending_travel
         if previous_point is not None and math.hypot(previous_point[0] - x1, previous_point[1] - y1) > 0.001:
+            travel_span = math.hypot(previous_point[0] - x1, previous_point[1] - y1)
+            should_trim = bool(pending_travel) or travel_span > trim_after_mm
             if pending_travel:
                 commands.append(
                     {
@@ -400,16 +461,17 @@ def image_to_segments(
                         "step": counts["needle_points"],
                     }
                 )
-            counts["trims"] += 1
-            commands.append(
-                {
-                    "x": previous_point[0],
-                    "y": previous_point[1],
-                    "command": "trim",
-                    "color": block["thread"],
-                    "step": counts["needle_points"],
-                }
-            )
+            if should_trim:
+                counts["trims"] += 1
+                commands.append(
+                    {
+                        "x": previous_point[0],
+                        "y": previous_point[1],
+                        "command": "trim",
+                        "color": block["thread"],
+                        "step": counts["needle_points"],
+                    }
+                )
             commands.append({"x": x1, "y": y1, "command": "jump", "color": block["thread"], "step": counts["needle_points"]})
             counts["jumps"] += 1
             segments.append(
@@ -418,7 +480,7 @@ def image_to_segments(
                     "y1": previous_point[1],
                     "x2": x1,
                     "y2": y1,
-                    "kind": pending_travel or "travel_after_trim",
+                    "kind": pending_travel or ("travel_after_trim" if should_trim else "jump"),
                     "color": block["color"],
                     "colorIndex": block["thread"],
                     "blockIndex": block["index"],
@@ -426,11 +488,13 @@ def image_to_segments(
                 }
             )
             pending_travel = None
-        commands.append({"x": x1, "y": y1, "command": "jump", "color": block["thread"], "step": counts["needle_points"]})
+        if previous_point is None:
+            commands.append({"x": x1, "y": y1, "command": "jump", "color": block["thread"], "step": counts["needle_points"]})
         span = math.hypot(x2 - x1, y2 - y1)
         if span <= 0.001:
             return
         max_len = max(max_stitch_mm, 0.1)
+        min_len = max(min_run_mm, 0.1)
         phase = ((row_index % 3) / 3.0) * max_len if fill_mode in {"tatami", "crosshatch"} else 0.0
         distances = [0.0]
         first = max_len - phase
@@ -441,6 +505,13 @@ def image_to_segments(
             distances.append(position)
             position += max_len
         distances.append(span)
+        if len(distances) >= 3 and distances[-1] - distances[-2] < min_len:
+            segment_count = max(1, len(distances) - 1)
+            even_step = span / segment_count
+            if even_step < min_len and segment_count > 1:
+                segment_count -= 1
+                even_step = span / segment_count
+            distances = [even_step * index for index in range(segment_count + 1)]
 
         last_x = x1
         last_y = y1
@@ -489,7 +560,77 @@ def image_to_segments(
             counts["color_changes"] += 1
             pending_travel = "travel_after_color_change"
 
-        for pass_index, stitch_angle in enumerate(stitch_angles):
+        if fill_mode in {"outline", "contour"}:
+            pixels = palette_image.load()
+            active = {
+                (col, row)
+                for row in range(palette_image.height)
+                for col in range(palette_image.width)
+                if pixels[col, row] == palette_index
+            }
+            layer_index = 0
+            while active:
+                boundary_points: list[tuple[int, int]] = []
+                for col, row in active:
+                    if (
+                        col == 0
+                        or row == 0
+                        or col == palette_image.width - 1
+                        or row == palette_image.height - 1
+                        or (col - 1, row) not in active
+                        or (col + 1, row) not in active
+                        or (col, row - 1) not in active
+                        or (col, row + 1) not in active
+                    ):
+                        boundary_points.append((col, row))
+                if not boundary_points:
+                    break
+                boundary_points.sort(key=lambda point: (point[1], point[0]))
+                run: list[tuple[int, int]] = []
+                last: tuple[int, int] | None = None
+                outline_runs: list[list[tuple[int, int]]] = []
+                for point in boundary_points:
+                    if last is None or point[1] != last[1] or point[0] > last[0] + 1:
+                        if len(run) >= 2:
+                            outline_runs.append(run)
+                        run = [point]
+                    else:
+                        run.append(point)
+                    last = point
+                if len(run) >= 2:
+                    outline_runs.append(run)
+                for row_index, run in enumerate(outline_runs):
+                    if (row_index + layer_index) % 2:
+                        run = list(reversed(run))
+                    x1 = origin_x + run[0][0] / px_per_mm
+                    y1 = origin_y + run[0][1] / px_per_mm
+                    x2 = origin_x + run[-1][0] / px_per_mm
+                    y2 = origin_y + run[-1][1] / px_per_mm
+                    append_run(block, x1, y1, x2, y2, row_index + layer_index)
+                if fill_mode == "outline":
+                    break
+                for _ in range(max(1, row_step_px)):
+                    if not active:
+                        break
+                    erode = set()
+                    for col, row in active:
+                        if (
+                            col == 0
+                            or row == 0
+                            or col == palette_image.width - 1
+                            or row == palette_image.height - 1
+                            or (col - 1, row) not in active
+                            or (col + 1, row) not in active
+                            or (col, row - 1) not in active
+                            or (col, row + 1) not in active
+                        ):
+                            erode.add((col, row))
+                    active.difference_update(erode)
+                layer_index += 1
+            continue
+
+        block_stitch_angles = [best_raster_angle(palette_index)] if fill_mode == "mixed" else stitch_angles
+        for pass_index, stitch_angle in enumerate(block_stitch_angles):
             working_image = palette_image
             if abs(stitch_angle) > 0.001:
                 working_image = palette_image.rotate(
@@ -506,7 +647,7 @@ def image_to_segments(
             cos_angle = math.cos(angle)
             sin_angle = math.sin(angle)
 
-            for row in range(working_height):
+            for row in range(0, working_height, row_step_px):
                 ranges: list[tuple[int, int]] = []
                 start: int | None = None
                 for col in range(working_width):

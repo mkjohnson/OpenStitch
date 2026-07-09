@@ -104,7 +104,8 @@ viewer and a downloadable Brother `.pes` file. For JPG, PNG, and PDF files, use
 it when near-identical shades become separate thread colors, or set it to `0` to
 preserve the quantized palette. Use `Fill mode`, `Fill angle`, and `Fill
 spacing` to control stitch density and direction. Tatami fill uses angled,
-staggered rows for a more embroidery-like solid fill; crosshatch adds a second
+staggered rows for a more embroidery-like solid fill; mixed chooses a low-micro
+fill plan automatically; contour follows the shape inward in rings; crosshatch adds a second
 opposing pass for denser coverage; horizontal fill keeps the older straight
 scanline behavior.
 
@@ -135,7 +136,7 @@ out on very large designs, then shown again when you zoom in.
 
 ## Notes
 
-- Filled closed shapes are stitched with tatami, crosshatch, or horizontal hatch rows.
+- Filled closed shapes are stitched with mixed, contour, tatami, crosshatch, horizontal, or outline modes.
 - Open paths and stroked shapes are stitched as running stitches.
 - SVG colors are converted into thread color stops.
 - JPG, PNG, and PDF artwork is quantized into a limited color palette before
