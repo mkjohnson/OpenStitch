@@ -438,10 +438,18 @@ class OpenStitchWindow(QMainWindow):
         self.canvas = StitchCanvas()
         self.canvas.on_add_stitch = self.add_manual_stitch
         self.canvas.on_delete_stitch = self.delete_nearest_stitch
-        self.setCentralWidget(self.canvas)
+        preview = QWidget()
+        preview_layout = QVBoxLayout(preview)
+        preview_layout.setContentsMargins(0, 0, 0, 0)
+        preview_layout.setSpacing(0)
+        preview_layout.addWidget(self.canvas, 1)
+        preview_layout.addWidget(self._playback_bar(), 0, Qt.AlignHCenter)
+        self.setCentralWidget(preview)
 
         right = self._thread_panel()
         right.setMinimumWidth(320)
+        view_options = self._view_options_panel()
+        view_options.setMinimumWidth(240)
         self.left_dock = QDockWidget("Workspace", self)
         self.left_dock.setObjectName("workspaceDock")
         self.left_dock.setWidget(left)
@@ -463,7 +471,19 @@ class OpenStitchWindow(QMainWindow):
             | QDockWidget.DockWidgetClosable
         )
         self.addDockWidget(Qt.RightDockWidgetArea, self.right_dock)
-        self.resizeDocks([self.left_dock, self.right_dock], [330, 330], Qt.Horizontal)
+        self.options_dock = QDockWidget("View Options", self)
+        self.options_dock.setObjectName("viewOptionsDock")
+        self.options_dock.setWidget(view_options)
+        self.options_dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea | Qt.BottomDockWidgetArea)
+        self.options_dock.setFeatures(
+            QDockWidget.DockWidgetMovable
+            | QDockWidget.DockWidgetFloatable
+            | QDockWidget.DockWidgetClosable
+        )
+        self.addDockWidget(Qt.RightDockWidgetArea, self.options_dock)
+        self.tabifyDockWidget(self.right_dock, self.options_dock)
+        self.right_dock.raise_()
+        self.resizeDocks([self.left_dock, self.right_dock], [330, 340], Qt.Horizontal)
         self._build_panel_menu()
 
     def _build_menu(self) -> None:
@@ -491,6 +511,7 @@ class OpenStitchWindow(QMainWindow):
         self.view_menu.addSeparator()
         self.view_menu.addAction(self.left_dock.toggleViewAction())
         self.view_menu.addAction(self.right_dock.toggleViewAction())
+        self.view_menu.addAction(self.options_dock.toggleViewAction())
         self.view_menu.addSeparator()
 
         float_left = QAction("Float Workspace Panel", self)
@@ -499,6 +520,9 @@ class OpenStitchWindow(QMainWindow):
         float_right = QAction("Float Threads Panel", self)
         float_right.triggered.connect(lambda: self._float_panel(self.right_dock))
         self.view_menu.addAction(float_right)
+        float_options = QAction("Float View Options Panel", self)
+        float_options.triggered.connect(lambda: self._float_panel(self.options_dock))
+        self.view_menu.addAction(float_options)
 
         dock_all = QAction("Dock All Panels", self)
         dock_all.triggered.connect(self._dock_all_panels)
@@ -512,10 +536,95 @@ class OpenStitchWindow(QMainWindow):
     def _dock_all_panels(self) -> None:
         self.left_dock.setFloating(False)
         self.right_dock.setFloating(False)
+        self.options_dock.setFloating(False)
         self.addDockWidget(Qt.LeftDockWidgetArea, self.left_dock)
         self.addDockWidget(Qt.RightDockWidgetArea, self.right_dock)
+        self.addDockWidget(Qt.RightDockWidgetArea, self.options_dock)
+        self.tabifyDockWidget(self.right_dock, self.options_dock)
         self.left_dock.show()
         self.right_dock.show()
+        self.options_dock.show()
+
+    def _playback_bar(self) -> QWidget:
+        bar = QFrame()
+        bar.setObjectName("playbackBar")
+        layout = QHBoxLayout(bar)
+        layout.setContentsMargins(12, 8, 12, 8)
+        self.play_button = QPushButton("Play")
+        self.play_button.clicked.connect(self.start_playback)
+        pause = QPushButton("Pause")
+        pause.clicked.connect(self.pause_playback)
+        stop = QPushButton("Stop")
+        stop.clicked.connect(self.stop_playback)
+        self.step_label = QLabel("0 / 0")
+        self.step_slider = QSlider(Qt.Horizontal)
+        self.step_slider.setMinimumWidth(360)
+        self.step_slider.valueChanged.connect(self.canvas.set_step)
+        self.step_slider.valueChanged.connect(
+            lambda value: self.step_label.setText(f"{value} / {self.step_slider.maximum()}")
+        )
+        layout.addWidget(self.play_button)
+        layout.addWidget(pause)
+        layout.addWidget(stop)
+        layout.addWidget(self.step_slider)
+        layout.addWidget(self.step_label)
+        return bar
+
+    def _legend_row(self, color: str, label: str, style: str = "dot") -> QWidget:
+        row = QWidget()
+        layout = QHBoxLayout(row)
+        layout.setContentsMargins(0, 0, 0, 0)
+        swatch = QLabel()
+        swatch.setFixedSize(34, 18)
+        if style == "line":
+            swatch.setStyleSheet(f"border-bottom:2px dashed {color};")
+        else:
+            swatch.setStyleSheet(
+                f"background:{color}; border:1px solid #172026; border-radius:7px; margin:2px 10px;"
+            )
+        layout.addWidget(swatch)
+        layout.addWidget(QLabel(label), 1)
+        return row
+
+    def _view_options_panel(self) -> QWidget:
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+        layout.addWidget(QLabel("Visibility"))
+        self.show_jumps = QCheckBox("Show jumps")
+        self.show_jumps.setChecked(False)
+        self.show_jumps.stateChanged.connect(self.update_canvas_flags)
+        self.show_points = QCheckBox("Show needle points")
+        self.show_points.setChecked(False)
+        self.show_points.stateChanged.connect(self.update_canvas_flags)
+        self.show_markers = QCheckBox("Show trims/color changes")
+        self.show_markers.setChecked(False)
+        self.show_markers.stateChanged.connect(self.update_canvas_flags)
+        self.edit_stitches = QCheckBox("Edit stitches: left draw, right delete")
+        self.edit_stitches.setChecked(False)
+        self.edit_stitches.stateChanged.connect(self.update_canvas_flags)
+        layout.addWidget(self.show_jumps)
+        layout.addWidget(self.show_points)
+        layout.addWidget(self.show_markers)
+        layout.addWidget(self.edit_stitches)
+        edit_buttons = QHBoxLayout()
+        undo_edit = QPushButton("Undo Edit")
+        undo_edit.clicked.connect(self.undo_stitch_edit)
+        reset_edits = QPushButton("Reset Edits")
+        reset_edits.clicked.connect(self.reset_stitch_edits)
+        edit_buttons.addWidget(undo_edit)
+        edit_buttons.addWidget(reset_edits)
+        layout.addLayout(edit_buttons)
+        line = QFrame()
+        line.setFrameShape(QFrame.HLine)
+        layout.addWidget(line)
+        layout.addWidget(QLabel("Legend"))
+        layout.addWidget(self._legend_row("#17201c", "Stitches", "line"))
+        layout.addWidget(self._legend_row("#66736f", "Jump travel", "line"))
+        layout.addWidget(self._legend_row("#ff8a3d", "Trim marker"))
+        layout.addWidget(self._legend_row("#2b7fff", "Color change marker"))
+        layout.addWidget(self._legend_row("#ffc446", "Needle point"))
+        layout.addStretch(1)
+        return panel
 
     def _conversion_tab(self) -> QWidget:
         panel = QWidget()
@@ -565,9 +674,25 @@ class OpenStitchWindow(QMainWindow):
         form.addRow("Color flattening", self.color_merge)
         form.addRow("PDF page", self.pdf_page)
         layout.addLayout(form)
+        actions_box = QFrame()
+        actions_layout = QVBoxLayout(actions_box)
+        actions_layout.setContentsMargins(0, 0, 0, 0)
+        actions_layout.addWidget(QLabel("File Actions"))
         open_button = QPushButton("Open and Convert")
         open_button.clicked.connect(self.open_design)
-        layout.addWidget(open_button)
+        save_pes = QPushButton("Save PES")
+        save_pes.clicked.connect(self.save_pes_as)
+        save_project = QPushButton("Save Project")
+        save_project.clicked.connect(self.save_project_as)
+        email_project = QPushButton("Email Project")
+        email_project.clicked.connect(self.email_project)
+        actions_layout.addWidget(open_button)
+        file_buttons = QHBoxLayout()
+        file_buttons.addWidget(save_pes)
+        file_buttons.addWidget(save_project)
+        file_buttons.addWidget(email_project)
+        actions_layout.addLayout(file_buttons)
+        layout.addWidget(actions_box)
         safe_density = QPushButton("Apply Safer Density")
         safe_density.clicked.connect(self.apply_safer_density)
         layout.addWidget(safe_density)
@@ -694,53 +819,11 @@ class OpenStitchWindow(QMainWindow):
         buttons = QHBoxLayout()
         apply_threads = QPushButton("Apply")
         apply_threads.clicked.connect(self.apply_thread_changes)
-        save = QPushButton("Save PES")
-        save.clicked.connect(self.save_pes_as)
-        project = QPushButton("Save Project")
-        project.clicked.connect(self.save_project_as)
-        email = QPushButton("Email Project")
-        email.clicked.connect(self.email_project)
+        reset_threads = QPushButton("Reset")
+        reset_threads.clicked.connect(self.reset_thread_changes)
         buttons.addWidget(apply_threads)
-        buttons.addWidget(save)
-        buttons.addWidget(project)
-        buttons.addWidget(email)
+        buttons.addWidget(reset_threads)
         layout.addLayout(buttons)
-        controls = QFrame()
-        control_layout = QVBoxLayout(controls)
-        self.step_slider = QSlider(Qt.Horizontal)
-        self.step_slider.valueChanged.connect(self.canvas.set_step)
-        self.step_label = QLabel("0 / 0")
-        self.step_slider.valueChanged.connect(lambda value: self.step_label.setText(f"{value} / {self.step_slider.maximum()}"))
-        play = QPushButton("Play")
-        play.clicked.connect(self.toggle_playback)
-        self.show_jumps = QCheckBox("Show jumps")
-        self.show_jumps.setChecked(False)
-        self.show_jumps.stateChanged.connect(self.update_canvas_flags)
-        self.show_points = QCheckBox("Show needle points")
-        self.show_points.setChecked(False)
-        self.show_points.stateChanged.connect(self.update_canvas_flags)
-        self.show_markers = QCheckBox("Show trims/color changes")
-        self.show_markers.setChecked(False)
-        self.show_markers.stateChanged.connect(self.update_canvas_flags)
-        self.edit_stitches = QCheckBox("Edit stitches: left draw, right delete")
-        self.edit_stitches.setChecked(False)
-        self.edit_stitches.stateChanged.connect(self.update_canvas_flags)
-        edit_buttons = QHBoxLayout()
-        undo_edit = QPushButton("Undo Edit")
-        undo_edit.clicked.connect(self.undo_stitch_edit)
-        reset_edits = QPushButton("Reset Edits")
-        reset_edits.clicked.connect(self.reset_stitch_edits)
-        edit_buttons.addWidget(undo_edit)
-        edit_buttons.addWidget(reset_edits)
-        control_layout.addWidget(play)
-        control_layout.addWidget(self.step_label)
-        control_layout.addWidget(self.step_slider)
-        control_layout.addWidget(self.show_jumps)
-        control_layout.addWidget(self.show_points)
-        control_layout.addWidget(self.show_markers)
-        control_layout.addWidget(self.edit_stitches)
-        control_layout.addLayout(edit_buttons)
-        layout.addWidget(controls)
         return panel
 
     def choose_fabric_color(self) -> None:
@@ -812,6 +895,15 @@ class OpenStitchWindow(QMainWindow):
             QMessageBox.information(self, "OpenStitch", "No stitch edit to undo.")
             return
         self.restore_snapshot(self.undo_stack.pop())
+
+    def reset_thread_changes(self) -> None:
+        if self.state is None:
+            return
+        if self.baseline_snapshot is None:
+            QMessageBox.information(self, "OpenStitch", "No thread reset point is available yet.")
+            return
+        self.restore_snapshot(self.baseline_snapshot)
+        self.undo_stack.clear()
 
     def current_settings(self) -> dict:
         settings = project_settings(
@@ -1760,11 +1852,21 @@ class OpenStitchWindow(QMainWindow):
 
     def toggle_playback(self) -> None:
         if self.play_timer.isActive():
-            self.play_timer.stop()
+            self.pause_playback()
         else:
-            if self.step_slider.value() >= self.step_slider.maximum():
-                self.step_slider.setValue(0)
-            self.play_timer.start(40)
+            self.start_playback()
+
+    def start_playback(self) -> None:
+        if self.step_slider.value() >= self.step_slider.maximum():
+            self.step_slider.setValue(0)
+        self.play_timer.start(40)
+
+    def pause_playback(self) -> None:
+        self.play_timer.stop()
+
+    def stop_playback(self) -> None:
+        self.play_timer.stop()
+        self.step_slider.setValue(0)
 
     def advance_playback(self) -> None:
         next_value = self.step_slider.value() + 20
