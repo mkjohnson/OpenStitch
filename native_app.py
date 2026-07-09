@@ -132,7 +132,11 @@ def realistic_preview_image(
         if y + 1 < height:
             weave.line([(0, y + 1), (width, y + 1)], fill=(*light, 16), width=1)
 
-    thread_width = max(2, int(round(thread_diameter_mm(thread_weight) * scale)))
+    nominal_thread_width = max(2, int(round(thread_diameter_mm(thread_weight) * scale)))
+    # Embroidery thread is round on the spool but flattens under stitch tension.
+    # Use the nominal diameter for the highlight and a wider coverage pass so
+    # photo exports do not show artificial fabric gaps between dense fill rows.
+    coverage_width = max(nominal_thread_width + 1, int(round(nominal_thread_width * 1.65)))
     shadow = Image.new("RGBA", image.size, (0, 0, 0, 0))
     shadow_draw = ImageDraw.Draw(shadow, "RGBA")
     thread_layer = Image.new("RGBA", image.size, (0, 0, 0, 0))
@@ -153,15 +157,15 @@ def realistic_preview_image(
         low = (*blend_rgb(color, (0, 0, 0), 0.32), 210)
         high = (*blend_rgb(color, (255, 255, 255), 0.42), 180)
         shadow_draw.line(
-            [(start[0] + thread_width * 0.45, start[1] + thread_width * 0.55), (end[0] + thread_width * 0.45, end[1] + thread_width * 0.55)],
+            [(start[0] + coverage_width * 0.36, start[1] + coverage_width * 0.44), (end[0] + coverage_width * 0.36, end[1] + coverage_width * 0.44)],
             fill=(0, 0, 0, 58),
-            width=max(1, thread_width + 2),
+            width=max(1, coverage_width + 2),
         )
-        thread_draw.line([start, end], fill=low, width=max(1, thread_width + 1))
-        thread_draw.line([start, end], fill=base, width=thread_width)
-        thread_draw.line([start, end], fill=high, width=max(1, thread_width // 3))
+        thread_draw.line([start, end], fill=low, width=max(1, coverage_width + 1))
+        thread_draw.line([start, end], fill=base, width=coverage_width)
+        thread_draw.line([start, end], fill=high, width=max(1, nominal_thread_width // 2))
 
-    shadow = shadow.filter(ImageFilter.GaussianBlur(radius=max(0.6, thread_width * 0.35)))
+    shadow = shadow.filter(ImageFilter.GaussianBlur(radius=max(0.6, coverage_width * 0.28)))
     image = Image.alpha_composite(image.convert("RGBA"), shadow)
     image = Image.alpha_composite(image, thread_layer)
     return image.convert("RGB")
