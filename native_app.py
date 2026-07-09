@@ -209,7 +209,7 @@ class StitchCanvas(QWidget):
 
     def paintEvent(self, event) -> None:  # noqa: N802 - Qt override
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing, False)
+        painter.setRenderHint(QPainter.Antialiasing, True)
         painter.fillRect(self.rect(), QColor(self.background_color))
         self._draw_grid(painter)
         if not self.segments:
@@ -680,6 +680,15 @@ class OpenStitchWindow(QMainWindow):
         self.max_stitch.setValue(3.0)
         self.max_stitch.setSuffix(" mm")
         self.stitch_perimeter = QCheckBox("Stitch perimeter of each color block")
+        self.perimeter_offset = QDoubleSpinBox()
+        self.perimeter_offset.setRange(0.0, 1.5)
+        self.perimeter_offset.setDecimals(2)
+        self.perimeter_offset.setSingleStep(0.05)
+        self.perimeter_offset.setValue(0.24)
+        self.perimeter_offset.setSuffix(" mm")
+        self.perimeter_passes = QSpinBox()
+        self.perimeter_passes.setRange(1, 3)
+        self.perimeter_passes.setValue(1)
         self.fill_mode = QComboBox()
         self.fill_mode.addItems(["mixed", "contour", "tatami", "crosshatch", "horizontal", "outline"])
         self.fill_angle = QDoubleSpinBox()
@@ -700,6 +709,8 @@ class OpenStitchWindow(QMainWindow):
         form.addRow("Fill spacing", self.fill_spacing)
         form.addRow("Max stitch", self.max_stitch)
         form.addRow("", self.stitch_perimeter)
+        form.addRow("Perimeter offset", self.perimeter_offset)
+        form.addRow("Perimeter passes", self.perimeter_passes)
         form.addRow("Fill mode", self.fill_mode)
         form.addRow("Fill angle", self.fill_angle)
         form.addRow("Max colors", self.max_colors)
@@ -750,10 +761,12 @@ class OpenStitchWindow(QMainWindow):
             self.fit_width,
             self.fill_spacing,
             self.max_stitch,
+            self.perimeter_offset,
             self.fill_angle,
             self.color_merge,
         ]:
             widget.valueChanged.connect(self.schedule_refresh)
+        self.perimeter_passes.valueChanged.connect(self.schedule_refresh)
         self.stitch_perimeter.stateChanged.connect(self.toggle_perimeter_preview)
         self.max_colors.valueChanged.connect(self.schedule_refresh)
         self.pdf_page.valueChanged.connect(self.schedule_refresh)
@@ -958,6 +971,8 @@ class OpenStitchWindow(QMainWindow):
             display_units=self.units_select.currentData() if hasattr(self, "units_select") else "metric",
             fabric_color=self.fabric_color_input.text().strip() if hasattr(self, "fabric_color_input") else "#fbfcfa",
             stitch_perimeter=self.stitch_perimeter.isChecked() if hasattr(self, "stitch_perimeter") else False,
+            perimeter_offset_mm=self.perimeter_offset.value() if hasattr(self, "perimeter_offset") else 0.24,
+            perimeter_passes=self.perimeter_passes.value() if hasattr(self, "perimeter_passes") else 1,
         )
         settings["thread_brand"] = self.selected_thread_brand()
         if self.state is not None and self.state.settings.get("_preserve_block_filter"):
@@ -1006,6 +1021,10 @@ class OpenStitchWindow(QMainWindow):
                 self.update_view_settings()
             if hasattr(self, "stitch_perimeter"):
                 self.stitch_perimeter.setChecked(bool(settings.get("stitch_perimeter", False)))
+            if hasattr(self, "perimeter_offset"):
+                self.perimeter_offset.setValue(float(settings.get("perimeter_offset_mm", 0.24)))
+            if hasattr(self, "perimeter_passes"):
+                self.perimeter_passes.setValue(int(settings.get("perimeter_passes", 1)))
             if hasattr(self, "thread_brand"):
                 index = self.thread_brand.findData(str(settings.get("thread_brand", "Floriani")))
                 if index >= 0:
@@ -1030,6 +1049,8 @@ class OpenStitchWindow(QMainWindow):
                 base_segments,
                 self.state.color_blocks,
                 max_stitch_mm=float(self.state.settings["max_stitch_mm"]),
+                offset_mm=float(self.state.settings.get("perimeter_offset_mm", 0.24)),
+                passes=int(self.state.settings.get("perimeter_passes", 1)),
             )
         else:
             self.state.segments = base_segments
@@ -1256,6 +1277,8 @@ class OpenStitchWindow(QMainWindow):
                 pes_path,
                 max_stitch_mm=float(settings["max_stitch_mm"]),
                 connect_short_gaps=True,
+                perimeter_offset_mm=float(settings.get("perimeter_offset_mm", 0.24)),
+                perimeter_passes=int(settings.get("perimeter_passes", 1)),
             )
             thread_metadata_path(pes_path).write_text(json.dumps({"blocks": written}, indent=2), encoding="utf-8")
             summary = project_summary_text(working_source, settings, bounds, counts, segments, blocks)
@@ -1334,6 +1357,8 @@ class OpenStitchWindow(QMainWindow):
                 segments,
                 blocks,
                 max_stitch_mm=float(settings["max_stitch_mm"]),
+                offset_mm=float(settings.get("perimeter_offset_mm", 0.24)),
+                passes=int(settings.get("perimeter_passes", 1)),
             )
             counts["needle_points"] = sum(1 for segment in segments if segment["kind"] == "stitch")
             counts["stitch_segments"] = counts["needle_points"]
@@ -1548,6 +1573,8 @@ class OpenStitchWindow(QMainWindow):
             rendered_pes,
             max_stitch_mm=float(self.state.settings["max_stitch_mm"]),
             connect_short_gaps=True,
+            perimeter_offset_mm=float(self.state.settings.get("perimeter_offset_mm", 0.24)),
+            perimeter_passes=int(self.state.settings.get("perimeter_passes", 1)),
         )
         thread_metadata_path(rendered_pes).write_text(json.dumps({"blocks": written}, indent=2), encoding="utf-8")
         self.state = DesignState(
@@ -1613,6 +1640,8 @@ class OpenStitchWindow(QMainWindow):
                 thread_label_overrides=self.label_overrides(),
                 max_stitch_mm=float(self.state.settings["max_stitch_mm"]),
                 connect_short_gaps=True,
+                perimeter_offset_mm=float(self.state.settings.get("perimeter_offset_mm", 0.24)),
+                perimeter_passes=int(self.state.settings.get("perimeter_passes", 1)),
             )
             thread_metadata_path(Path(target)).write_text(json.dumps({"blocks": written}, indent=2), encoding="utf-8")
             QMessageBox.information(self, "OpenStitch", f"Saved {target}")

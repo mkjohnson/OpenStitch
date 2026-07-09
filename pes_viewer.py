@@ -453,6 +453,7 @@ def stitched_boundary_loops(
     block_segments: list[dict],
     *,
     cell_mm: float = 0.18,
+    offset_mm: float = 0.24,
     min_loop_length_mm: float = 0.0,
 ) -> list[list[tuple[float, float]]]:
     if not block_segments:
@@ -508,6 +509,9 @@ def stitched_boundary_loops(
 
     close_radius = max(1, int(math.ceil(0.24 / cell_mm)))
     occupied = erode(dilate(occupied, close_radius), close_radius)
+    offset_radius = max(0, int(round(offset_mm / cell_mm)))
+    if offset_radius:
+        occupied = dilate(occupied, offset_radius)
     if not occupied:
         return []
     edges: set[tuple[tuple[int, int], tuple[int, int]]] = set()
@@ -592,9 +596,12 @@ def add_perimeter_segments(
     color_blocks: list[dict],
     *,
     max_stitch_mm: float,
+    offset_mm: float = 0.24,
+    passes: int = 1,
 ) -> list[dict]:
     next_step = max((segment.get("step", 0) for segment in segments), default=0)
     extra_segments: list[dict] = []
+    passes = max(1, min(int(passes), 3))
     for block in color_blocks:
         block_index = block["index"]
         block_segments = [
@@ -602,27 +609,31 @@ def add_perimeter_segments(
             for segment in segments
             if segment.get("kind") == "stitch" and segment.get("blockIndex") == block_index
         ]
-        for perimeter_index, loop in enumerate(stitched_boundary_loops(block_segments)):
-            for start, end in zip(loop, loop[1:]):
-                last = start
-                for point in split_long_point_span(start, end, max_stitch_mm):
-                    next_step += 1
-                    extra_segments.append(
-                        {
-                            "x1": last[0],
-                            "y1": last[1],
-                            "x2": point[0],
-                            "y2": point[1],
-                            "kind": "stitch",
-                            "color": block["color"],
-                        "colorIndex": block.get("thread", block_index),
-                        "blockIndex": block_index,
-                        "step": next_step,
-                        "perimeter": True,
-                        "perimeterLoop": perimeter_index,
-                    }
-                )
-                    last = point
+        loop_id = 0
+        for pass_index in range(passes):
+            pass_offset = offset_mm + pass_index * 0.35
+            for loop in stitched_boundary_loops(block_segments, offset_mm=pass_offset):
+                for start, end in zip(loop, loop[1:]):
+                    last = start
+                    for point in split_long_point_span(start, end, max_stitch_mm):
+                        next_step += 1
+                        extra_segments.append(
+                            {
+                                "x1": last[0],
+                                "y1": last[1],
+                                "x2": point[0],
+                                "y2": point[1],
+                                "kind": "stitch",
+                                "color": block["color"],
+                                "colorIndex": block.get("thread", block_index),
+                                "blockIndex": block_index,
+                                "step": next_step,
+                                "perimeter": True,
+                                "perimeterLoop": loop_id,
+                            }
+                        )
+                        last = point
+                loop_id += 1
     if not extra_segments:
         return segments
     block_counts = {block["index"]: 0 for block in color_blocks}
@@ -3492,6 +3503,8 @@ def write_segments_as_pes(
     max_connect_gap_mm: float = 0.45,
     min_run_length_mm: float = 0.3,
     stitch_perimeter: bool = False,
+    perimeter_offset_mm: float = 0.24,
+    perimeter_passes: int = 1,
 ) -> list[dict]:
     selected_blocks = selected_blocks if selected_blocks is not None else {
         block["index"] for block in color_blocks
@@ -3526,7 +3539,13 @@ def write_segments_as_pes(
     previous_point: tuple[float, float] | None = None
     written_blocks: list[dict] = []
     if stitch_perimeter:
-        segments = add_perimeter_segments(segments, color_blocks, max_stitch_mm=max_stitch_mm)
+        segments = add_perimeter_segments(
+            segments,
+            color_blocks,
+            max_stitch_mm=max_stitch_mm,
+            offset_mm=perimeter_offset_mm,
+            passes=perimeter_passes,
+        )
 
     def ensure_active_block(block_index: int) -> None:
         nonlocal active_block

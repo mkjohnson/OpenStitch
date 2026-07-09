@@ -121,9 +121,13 @@ def project_settings(
     display_units: str = "metric",
     fabric_color: str = "#fbfcfa",
     stitch_perimeter: bool = False,
+    perimeter_offset_mm: float = 0.24,
+    perimeter_passes: int = 1,
 ) -> dict:
     display_units = "sae" if display_units == "sae" else "metric"
     fabric_color = fabric_color if re.match(r"^#[0-9A-Fa-f]{6}$", fabric_color or "") else "#fbfcfa"
+    perimeter_offset_mm = max(0.0, min(float(perimeter_offset_mm), 1.5))
+    perimeter_passes = max(1, min(int(perimeter_passes), 3))
     return {
         "fit_width_mm": fit_width,
         "fill_spacing_mm": fill_spacing,
@@ -137,6 +141,8 @@ def project_settings(
         "display_units": display_units,
         "fabric_color": fabric_color,
         "stitch_perimeter": bool(stitch_perimeter),
+        "perimeter_offset_mm": perimeter_offset_mm,
+        "perimeter_passes": perimeter_passes,
     }
 
 
@@ -213,6 +219,8 @@ def project_summary_text(
         f"Display units: {settings.get('display_units', 'metric')}",
         f"Preview fabric color: {settings.get('fabric_color', '#fbfcfa')}",
         f"Stitch color-block perimeter: {'yes' if settings.get('stitch_perimeter') else 'no'}",
+        f"Perimeter offset: {float(settings.get('perimeter_offset_mm', 0.24)):.2f} mm",
+        f"Perimeter passes: {int(settings.get('perimeter_passes', 1))}",
         "",
     ]
     return "\n".join(lines)
