@@ -1215,6 +1215,7 @@ class OpenStitchWindow(QMainWindow):
                 blocks,
                 pes_path,
                 max_stitch_mm=float(settings["max_stitch_mm"]),
+                connect_short_gaps=True,
             )
             thread_metadata_path(pes_path).write_text(json.dumps({"blocks": written}, indent=2), encoding="utf-8")
             summary = project_summary_text(working_source, settings, bounds, counts, segments, blocks)
@@ -1502,6 +1503,7 @@ class OpenStitchWindow(QMainWindow):
             new_blocks,
             rendered_pes,
             max_stitch_mm=float(self.state.settings["max_stitch_mm"]),
+            connect_short_gaps=True,
         )
         thread_metadata_path(rendered_pes).write_text(json.dumps({"blocks": written}, indent=2), encoding="utf-8")
         self.state = DesignState(
@@ -1566,6 +1568,7 @@ class OpenStitchWindow(QMainWindow):
                 color_overrides=self.color_overrides(),
                 thread_label_overrides=self.label_overrides(),
                 max_stitch_mm=float(self.state.settings["max_stitch_mm"]),
+                connect_short_gaps=True,
             )
             thread_metadata_path(Path(target)).write_text(json.dumps({"blocks": written}, indent=2), encoding="utf-8")
             QMessageBox.information(self, "OpenStitch", f"Saved {target}")

@@ -3216,16 +3216,18 @@ def collect_svg_segments(
         assert active_block is not None
         first = run.points_mm[0]
         if previous_point is not None and math.hypot(previous_point[0] - first[0], previous_point[1] - first[1]) > 0.001:
-            counts["trims"] += 1
-            commands.append(
-                {
-                    "x": previous_point[0],
-                    "y": previous_point[1],
-                    "command": "trim",
-                    "color": active_block["thread"],
-                    "step": counts["needle_points"],
-                }
-            )
+            is_color_travel = pending_travel == "travel_after_color_change"
+            if is_color_travel:
+                counts["trims"] += 1
+                commands.append(
+                    {
+                        "x": previous_point[0],
+                        "y": previous_point[1],
+                        "command": "trim",
+                        "color": active_block["thread"],
+                        "step": counts["needle_points"],
+                    }
+                )
             counts["jumps"] += 1
             segments.append(
                 {
@@ -3233,7 +3235,7 @@ def collect_svg_segments(
                     "y1": previous_point[1],
                     "x2": first[0],
                     "y2": first[1],
-                    "kind": pending_travel or "travel_after_trim",
+                    "kind": pending_travel or "jump",
                     "color": active_block["color"],
                     "colorIndex": active_block["thread"],
                     "blockIndex": active_block["index"],
@@ -3485,7 +3487,7 @@ def write_segments_as_pes(
     max_stitch_mm: float = 7.0,
     min_stitch_mm: float = 0.3,
     lock_stitch_mm: float = 1.0,
-    connect_short_gaps: bool = False,
+    connect_short_gaps: bool = True,
     min_run_length_mm: float = 0.3,
     stitch_perimeter: bool = False,
 ) -> list[dict]:

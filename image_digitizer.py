@@ -450,8 +450,7 @@ def image_to_segments(
     ) -> None:
         nonlocal previous_point, pending_travel
         if previous_point is not None and math.hypot(previous_point[0] - x1, previous_point[1] - y1) > 0.001:
-            travel_span = math.hypot(previous_point[0] - x1, previous_point[1] - y1)
-            should_trim = bool(pending_travel) or travel_span > trim_after_mm
+            should_trim = pending_travel == "travel_after_color_change"
             if pending_travel:
                 commands.append(
                     {
@@ -481,7 +480,7 @@ def image_to_segments(
                     "y1": previous_point[1],
                     "x2": x1,
                     "y2": y1,
-                    "kind": pending_travel or ("travel_after_trim" if should_trim else "jump"),
+                    "kind": pending_travel or "jump",
                     "color": block["color"],
                     "colorIndex": block["thread"],
                     "blockIndex": block["index"],
