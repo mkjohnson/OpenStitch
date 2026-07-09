@@ -93,7 +93,7 @@ def to_mm(points_px: Iterable[tuple[float, float]]) -> list[tuple[float, float]]
     return [(x / SVG_PX_PER_MM, y / SVG_PX_PER_MM) for x, y in points_px]
 
 
-MIN_FILL_STITCH_MM = 0.5
+MIN_FILL_STITCH_MM = 0.15
 
 
 def split_long_stitches(

@@ -309,7 +309,7 @@ def image_to_segments(
     fill_mode: str = "tatami",
     fill_angle_deg: float = 45.0,
     fill_spacing_mm: float = 0.5,
-    min_run_mm: float = 0.5,
+    min_run_mm: float = 0.15,
     background_threshold: int = 245,
     color_merge_distance: float = 56.0,
     max_stitch_mm: float = 3.0,
