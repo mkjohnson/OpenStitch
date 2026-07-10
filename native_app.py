@@ -816,6 +816,13 @@ class OpenStitchWindow(QMainWindow):
         self.max_stitch.setDecimals(1)
         self.max_stitch.setValue(3.0)
         self.max_stitch.setSuffix(" mm")
+        self.min_stitch = QDoubleSpinBox()
+        self.min_stitch.setRange(0.05, 1.0)
+        self.min_stitch.setDecimals(2)
+        self.min_stitch.setSingleStep(0.05)
+        self.min_stitch.setValue(0.30)
+        self.min_stitch.setSuffix(" mm")
+        self.min_stitch.setToolTip("Shortest generated stitch/run. Higher values reduce micro-stitches but can remove fine detail.")
         self.stitch_perimeter = QCheckBox("Stitch perimeter of each color block")
         self.perimeter_offset = QDoubleSpinBox()
         self.perimeter_offset.setRange(0.0, 1.5)
@@ -850,6 +857,7 @@ class OpenStitchWindow(QMainWindow):
         form.addRow("Fit width", self.fit_width)
         form.addRow("Fill spacing", self.fill_spacing)
         form.addRow("Max stitch", self.max_stitch)
+        form.addRow("Min stitch", self.min_stitch)
         form.addRow("", self.stitch_perimeter)
         form.addRow("Perimeter offset", self.perimeter_offset)
         form.addRow("Perimeter passes", self.perimeter_passes)
@@ -934,6 +942,7 @@ class OpenStitchWindow(QMainWindow):
             self.fit_width,
             self.fill_spacing,
             self.max_stitch,
+            self.min_stitch,
             self.perimeter_offset,
             self.fill_angle,
             self.color_merge,
@@ -1137,6 +1146,7 @@ class OpenStitchWindow(QMainWindow):
             fill_spacing=self.fill_spacing.value(),
             thread_weight=DEFAULT_THREAD_WEIGHT,
             max_stitch=self.max_stitch.value(),
+            min_stitch=self.min_stitch.value() if hasattr(self, "min_stitch") else 0.30,
             fill_mode=self.fill_mode.currentText(),
             fill_angle_deg=self.fill_angle.value(),
             max_colors=self.max_colors.value(),
@@ -1178,6 +1188,8 @@ class OpenStitchWindow(QMainWindow):
                 self.fit_width.setValue(float(settings["fit_width_mm"]))
             self.fill_spacing.setValue(float(settings.get("fill_spacing_mm", self.fill_spacing.value())))
             self.max_stitch.setValue(float(settings.get("max_stitch_mm", self.max_stitch.value())))
+            if hasattr(self, "min_stitch"):
+                self.min_stitch.setValue(float(settings.get("min_stitch_mm", self.min_stitch.value())))
             mode = str(settings.get("fill_mode", self.fill_mode.currentText()))
             index = self.fill_mode.findText(mode)
             if index >= 0:
@@ -1505,6 +1517,7 @@ class OpenStitchWindow(QMainWindow):
                 sample_step_mm=0.8,
                 fill_spacing_mm=float(settings["fill_spacing_mm"]),
                 max_stitch_mm=float(settings["max_stitch_mm"]),
+                min_stitch_mm=float(settings.get("min_stitch_mm", 0.30)),
                 fill_angle_deg=float(settings["fill_angle_deg"]),
                 fill_mode=str(settings["fill_mode"]),
                 path_planning=str(settings.get("path_planning", "min_cuts")),
@@ -1524,6 +1537,7 @@ class OpenStitchWindow(QMainWindow):
                 color_merge_distance=float(settings["color_merge_distance"]),
                 fill_spacing_mm=float(settings["fill_spacing_mm"]),
                 max_stitch_mm=float(settings["max_stitch_mm"]),
+                min_run_mm=float(settings.get("min_stitch_mm", 0.30)),
                 pdf_page=int(settings["pdf_page"]),
             )
         else:

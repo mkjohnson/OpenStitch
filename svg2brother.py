@@ -93,15 +93,45 @@ def route_point_runs(
     runs: Iterable[list[tuple[float, float]]],
     *,
     start: tuple[float, float] | None = None,
+    mode: str = "min_cuts",
 ) -> list[list[tuple[float, float]]]:
     ordered = [list(run) for run in runs if len(run) >= 2]
     if not ordered:
         return []
+    if mode == "clean_top":
+        routed: list[list[tuple[float, float]]] = []
+        current = start
+        for run in ordered:
+            if current is not None and distance(current, run[-1]) < distance(current, run[0]):
+                run.reverse()
+            routed.append(run)
+            current = run[-1]
+        return routed
+
     routed: list[list[tuple[float, float]]] = []
     current = start
-    for run in ordered:
-        if current is not None and distance(current, run[-1]) < distance(current, run[0]):
-            run.reverse()
+    remaining = ordered
+    while remaining:
+        if current is None:
+            run = remaining.pop(0)
+        else:
+            best_index = 0
+            best_reversed = False
+            best_distance = float("inf")
+            for index, candidate in enumerate(remaining):
+                forward = distance(current, candidate[0])
+                reverse = distance(current, candidate[-1])
+                if forward < best_distance:
+                    best_index = index
+                    best_reversed = False
+                    best_distance = forward
+                if reverse < best_distance:
+                    best_index = index
+                    best_reversed = True
+                    best_distance = reverse
+            run = remaining.pop(best_index)
+            if best_reversed:
+                run.reverse()
         routed.append(run)
         current = run[-1]
     return routed
@@ -123,7 +153,7 @@ def route_stitch_runs(runs: Iterable[StitchRun], mode: str = "min_cuts") -> list
     routed: list[StitchRun] = []
     current: tuple[float, float] | None = None
     for color in color_order:
-        for points in route_point_runs(grouped[color], start=current):
+        for points in route_point_runs(grouped[color], start=current, mode=mode):
             routed.append(StitchRun(color=color, points_mm=points))
             current = points[-1]
     return routed
@@ -588,6 +618,7 @@ def extract_runs_for_final_size(
     fill_angle_deg: float = 0.0,
     fill_mode: str = "tatami",
     path_planning: str = "min_cuts",
+    min_stitch_mm: float = MIN_FILL_STITCH_MM,
 ) -> list[StitchRun]:
     runs = extract_runs(
         svg_file,
@@ -597,7 +628,7 @@ def extract_runs_for_final_size(
         fill_angle_deg=fill_angle_deg,
         fill_mode=fill_mode,
         path_planning=path_planning,
-        min_stitch_mm=MIN_FILL_STITCH_MM,
+        min_stitch_mm=min_stitch_mm,
     )
     min_x, min_y, max_x, max_y = bounds(runs)
     width = max(max_x - min_x, 0.001)
@@ -619,7 +650,7 @@ def extract_runs_for_final_size(
             fill_angle_deg=fill_angle_deg,
             fill_mode=fill_mode,
             path_planning=path_planning,
-            min_stitch_mm=max(MIN_FILL_STITCH_MM / scale, 0.01),
+            min_stitch_mm=max(min_stitch_mm / scale, 0.01),
         )
     return transform_runs(
         runs,

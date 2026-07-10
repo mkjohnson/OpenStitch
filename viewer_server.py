@@ -124,17 +124,20 @@ def project_settings(
     perimeter_offset_mm: float = 0.24,
     perimeter_passes: int = 1,
     path_planning: str = "min_cuts",
+    min_stitch: float = 0.3,
 ) -> dict:
     display_units = "sae" if display_units == "sae" else "metric"
     fabric_color = fabric_color if re.match(r"^#[0-9A-Fa-f]{6}$", fabric_color or "") else "#fbfcfa"
     perimeter_offset_mm = max(0.0, min(float(perimeter_offset_mm), 1.5))
     perimeter_passes = max(1, min(int(perimeter_passes), 3))
     path_planning = path_planning if path_planning in {"fast", "clean_top", "min_cuts"} else "min_cuts"
+    min_stitch = max(0.05, min(float(min_stitch), 1.0))
     return {
         "fit_width_mm": fit_width,
         "fill_spacing_mm": fill_spacing,
         "thread_weight": normalize_thread_weight(thread_weight),
         "max_stitch_mm": max_stitch,
+        "min_stitch_mm": min_stitch,
         "fill_mode": fill_mode,
         "fill_angle_deg": fill_angle_deg,
         "max_colors": max_colors,
@@ -262,6 +265,9 @@ def coerce_project_settings(settings: dict) -> dict:
     max_stitch = float(settings.get("max_stitch_mm", 3.0))
     if max_stitch < MIN_BROTHER_STITCH_MM or max_stitch > MAX_BROTHER_EMBROIDERY_STITCH_MM:
         raise ValueError("Project max stitch length must be between 0.5 and 7.0 mm")
+    min_stitch = float(settings.get("min_stitch_mm", 0.3))
+    if min_stitch < 0.05 or min_stitch > 1.0:
+        raise ValueError("Project min stitch length must be between 0.05 and 1.0 mm")
     fill_mode = str(settings.get("fill_mode") or "tatami")
     if fill_mode not in {"tatami", "horizontal", "crosshatch", "mixed", "outline", "contour"}:
         fill_mode = "tatami"
@@ -282,6 +288,7 @@ def coerce_project_settings(settings: dict) -> dict:
         fill_spacing=fill_spacing,
         thread_weight=thread_weight,
         max_stitch=max_stitch,
+        min_stitch=min_stitch,
         fill_mode=fill_mode,
         fill_angle_deg=fill_angle_deg,
         max_colors=max_colors,

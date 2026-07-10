@@ -29,13 +29,42 @@ def route_planned_runs(
     ordered = [(list(points), row_index) for points, row_index in runs if len(points) >= 2]
     if mode == "fast":
         return ordered
+    if mode == "clean_top":
+        routed: list[tuple[list[tuple[float, float]], int]] = []
+        current = start
+        for points, row_index in ordered:
+            if current is not None:
+                forward = math.hypot(current[0] - points[0][0], current[1] - points[0][1])
+                reverse = math.hypot(current[0] - points[-1][0], current[1] - points[-1][1])
+                if reverse < forward:
+                    points.reverse()
+            routed.append((points, row_index))
+            current = points[-1]
+        return routed
+
     routed: list[tuple[list[tuple[float, float]], int]] = []
     current = start
-    for points, row_index in ordered:
-        if current is not None:
-            forward = math.hypot(current[0] - points[0][0], current[1] - points[0][1])
-            reverse = math.hypot(current[0] - points[-1][0], current[1] - points[-1][1])
-            if reverse < forward:
+    remaining = ordered
+    while remaining:
+        if current is None:
+            points, row_index = remaining.pop(0)
+        else:
+            best_index = 0
+            best_reversed = False
+            best_distance = float("inf")
+            for index, (candidate, _) in enumerate(remaining):
+                forward = math.hypot(current[0] - candidate[0][0], current[1] - candidate[0][1])
+                reverse = math.hypot(current[0] - candidate[-1][0], current[1] - candidate[-1][1])
+                if forward < best_distance:
+                    best_index = index
+                    best_reversed = False
+                    best_distance = forward
+                if reverse < best_distance:
+                    best_index = index
+                    best_reversed = True
+                    best_distance = reverse
+            points, row_index = remaining.pop(best_index)
+            if best_reversed:
                 points.reverse()
         routed.append((points, row_index))
         current = points[-1]
