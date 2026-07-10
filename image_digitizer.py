@@ -19,81 +19,12 @@ from thread_inventory import hex_to_rgb, load_inventory
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tif", ".tiff", ".webp"}
 PDF_SUFFIXES = {".pdf"}
 RASTER_SUFFIXES = IMAGE_SUFFIXES | PDF_SUFFIXES
-LOCAL_ROUTE_LOOKAHEAD = 24
-
-
-def route_bounds(run: list[tuple[float, float]]) -> tuple[float, float, float, float]:
-    xs = [x for x, _ in run]
-    ys = [y for _, y in run]
-    return min(xs), min(ys), max(xs), max(ys)
-
-
-def route_bounds_gap(
-    first: tuple[float, float, float, float],
-    second: tuple[float, float, float, float],
-) -> float:
-    dx = max(first[0] - second[2], second[0] - first[2], 0.0)
-    dy = max(first[1] - second[3], second[1] - first[3], 0.0)
-    return math.hypot(dx, dy)
-
-
-def connected_planned_run_groups(
-    runs: list[tuple[list[tuple[float, float]], int]],
-    gap_mm: float = 1.5,
-) -> list[list[tuple[list[tuple[float, float]], int]]]:
-    if len(runs) <= 1:
-        return [runs]
-    parents = list(range(len(runs)))
-    bounds_list = [route_bounds(points) for points, _ in runs]
-    order = sorted(range(len(runs)), key=lambda index: bounds_list[index][0])
-
-    def find(index: int) -> int:
-        while parents[index] != index:
-            parents[index] = parents[parents[index]]
-            index = parents[index]
-        return index
-
-    def union(left: int, right: int) -> None:
-        left_root = find(left)
-        right_root = find(right)
-        if left_root != right_root:
-            parents[right_root] = left_root
-
-    for pos, left_index in enumerate(order):
-        left_bounds = bounds_list[left_index]
-        for right_index in order[pos + 1 :]:
-            right_bounds = bounds_list[right_index]
-            if right_bounds[0] > left_bounds[2] + gap_mm:
-                break
-            if route_bounds_gap(left_bounds, right_bounds) <= gap_mm:
-                union(left_index, right_index)
-
-    grouped: dict[int, list[tuple[list[tuple[float, float]], int]]] = {}
-    first_seen: dict[int, int] = {}
-    for index, run in enumerate(runs):
-        root = find(index)
-        grouped.setdefault(root, []).append(run)
-        first_seen.setdefault(root, index)
-    return [grouped[root] for root in sorted(grouped, key=lambda root: first_seen[root])]
-
-
-def endpoint_distance_to_planned_group(
-    point: tuple[float, float],
-    group: list[tuple[list[tuple[float, float]], int]],
-) -> float:
-    return min(
-        min(
-            math.hypot(point[0] - points[0][0], point[1] - points[0][1]),
-            math.hypot(point[0] - points[-1][0], point[1] - points[-1][1]),
-        )
-        for points, _ in group
-    )
 
 
 def route_planned_runs(
     runs: list[tuple[list[tuple[float, float]], int]],
     start: tuple[float, float] | None = None,
-    mode: str = "clean_top",
+    mode: str = "min_cuts",
 ) -> list[tuple[list[tuple[float, float]], int]]:
     ordered = [(list(points), row_index) for points, row_index in runs if len(points) >= 2]
     if mode == "fast":
@@ -113,41 +44,30 @@ def route_planned_runs(
 
     routed: list[tuple[list[tuple[float, float]], int]] = []
     current = start
-    remaining_groups = connected_planned_run_groups(ordered)
-    while remaining_groups:
+    remaining = ordered
+    while remaining:
         if current is None:
-            group = remaining_groups.pop(0)
+            points, row_index = remaining.pop(0)
         else:
-            best_group_index = min(
-                range(len(remaining_groups)),
-                key=lambda index: endpoint_distance_to_planned_group(current, remaining_groups[index]),
-            )
-            group = remaining_groups.pop(best_group_index)
-
-        remaining = group
-        while remaining:
-            if current is None:
-                points, row_index = remaining.pop(0)
-            else:
-                best_index = 0
-                best_reversed = False
-                best_distance = float("inf")
-                for index, (candidate, _) in enumerate(remaining[:LOCAL_ROUTE_LOOKAHEAD]):
-                    forward = math.hypot(current[0] - candidate[0][0], current[1] - candidate[0][1])
-                    reverse = math.hypot(current[0] - candidate[-1][0], current[1] - candidate[-1][1])
-                    if forward < best_distance:
-                        best_index = index
-                        best_reversed = False
-                        best_distance = forward
-                    if reverse < best_distance:
-                        best_index = index
-                        best_reversed = True
-                        best_distance = reverse
-                points, row_index = remaining.pop(best_index)
-                if best_reversed:
-                    points.reverse()
-            routed.append((points, row_index))
-            current = points[-1]
+            best_index = 0
+            best_reversed = False
+            best_distance = float("inf")
+            for index, (candidate, _) in enumerate(remaining):
+                forward = math.hypot(current[0] - candidate[0][0], current[1] - candidate[0][1])
+                reverse = math.hypot(current[0] - candidate[-1][0], current[1] - candidate[-1][1])
+                if forward < best_distance:
+                    best_index = index
+                    best_reversed = False
+                    best_distance = forward
+                if reverse < best_distance:
+                    best_index = index
+                    best_reversed = True
+                    best_distance = reverse
+            points, row_index = remaining.pop(best_index)
+            if best_reversed:
+                points.reverse()
+        routed.append((points, row_index))
+        current = points[-1]
     return routed
 
 
@@ -443,7 +363,7 @@ def image_to_segments(
     background_threshold: int = 245,
     color_merge_distance: float = 56.0,
     max_stitch_mm: float = 3.0,
-    path_planning: str = "clean_top",
+    path_planning: str = "min_cuts",
     trim_after_mm: float = 12.0,
     detail_px_per_mm: float = 8.0,
     pdf_page: int = 1,
@@ -470,7 +390,7 @@ def image_to_segments(
     if fill_mode not in {"horizontal", "tatami", "crosshatch", "mixed", "outline", "contour"}:
         fill_mode = "tatami"
     if path_planning not in {"fast", "clean_top", "min_cuts"}:
-        path_planning = "clean_top"
+        path_planning = "min_cuts"
     background_fill_index = next(
         (index for index, color in enumerate(colors) if is_background_color(color, background_threshold)),
         0,
