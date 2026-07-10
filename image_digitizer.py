@@ -101,15 +101,14 @@ def route_planned_runs(
     if mode == "clean_top":
         routed: list[tuple[list[tuple[float, float]], int]] = []
         current = start
-        for group in connected_planned_run_groups(ordered):
-            for points, row_index in group:
-                if current is not None:
-                    forward = math.hypot(current[0] - points[0][0], current[1] - points[0][1])
-                    reverse = math.hypot(current[0] - points[-1][0], current[1] - points[-1][1])
-                    if reverse < forward:
-                        points.reverse()
-                routed.append((points, row_index))
-                current = points[-1]
+        for points, row_index in ordered:
+            if current is not None:
+                forward = math.hypot(current[0] - points[0][0], current[1] - points[0][1])
+                reverse = math.hypot(current[0] - points[-1][0], current[1] - points[-1][1])
+                if reverse < forward:
+                    points.reverse()
+            routed.append((points, row_index))
+            current = points[-1]
         return routed
 
     routed: list[tuple[list[tuple[float, float]], int]] = []
@@ -586,7 +585,9 @@ def image_to_segments(
         connected_to_start = False
         if previous_point is not None and math.hypot(previous_point[0] - x1, previous_point[1] - y1) > 0.001:
             should_trim = pending_travel == "travel_after_color_change"
-            can_stitch_travel = False
+            travel_distance = math.hypot(previous_point[0] - x1, previous_point[1] - y1)
+            connector_limit_mm = min(max_stitch_mm, max(fill_spacing_mm * 2.5, 0.65), 1.2)
+            can_stitch_travel = path_planning == "min_cuts" and not should_trim and travel_distance <= connector_limit_mm
             if pending_travel:
                 commands.append(
                     {

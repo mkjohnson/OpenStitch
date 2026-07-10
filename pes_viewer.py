@@ -3267,7 +3267,9 @@ def collect_svg_segments(
         connected_to_first = False
         if previous_point is not None and math.hypot(previous_point[0] - first[0], previous_point[1] - first[1]) > 0.001:
             is_color_travel = pending_travel == "travel_after_color_change"
-            can_stitch_travel = False
+            travel_distance = math.hypot(previous_point[0] - first[0], previous_point[1] - first[1])
+            connector_limit_mm = min(max_stitch_mm, max(fill_spacing_mm * 2.5, 0.65), 1.2)
+            can_stitch_travel = path_planning == "min_cuts" and not is_color_travel and travel_distance <= connector_limit_mm
             if can_stitch_travel:
                 segment_start = previous_point
                 for point in split_long_point_span(previous_point, first, max_stitch_mm):
