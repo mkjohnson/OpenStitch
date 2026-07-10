@@ -134,7 +134,9 @@ def route_point_runs(
     return routed
 
 
-def route_stitch_runs(runs: Iterable[StitchRun]) -> list[StitchRun]:
+def route_stitch_runs(runs: Iterable[StitchRun], mode: str = "min_cuts") -> list[StitchRun]:
+    if mode == "fast":
+        return [run for run in runs if len(run.points_mm) >= 2]
     grouped: dict[str, list[list[tuple[float, float]]]] = {}
     color_order: list[str] = []
     for run in runs:
@@ -482,6 +484,7 @@ def extract_runs(
     max_stitch_mm: float,
     fill_angle_deg: float = 0.0,
     fill_mode: str = "tatami",
+    path_planning: str = "min_cuts",
     min_stitch_mm: float = MIN_FILL_STITCH_MM,
 ) -> list[StitchRun]:
     svg = SVG.parse(str(svg_file), reify=True)
@@ -555,7 +558,7 @@ def extract_runs(
                     )
                 )
 
-    return route_stitch_runs(runs)
+    return route_stitch_runs(runs, mode=path_planning)
 
 
 def bounds(runs: Iterable[StitchRun]) -> tuple[float, float, float, float]:
@@ -611,6 +614,7 @@ def extract_runs_for_final_size(
     center: bool,
     fill_angle_deg: float = 0.0,
     fill_mode: str = "tatami",
+    path_planning: str = "min_cuts",
 ) -> list[StitchRun]:
     runs = extract_runs(
         svg_file,
@@ -619,6 +623,7 @@ def extract_runs_for_final_size(
         max_stitch_mm=max_stitch_mm,
         fill_angle_deg=fill_angle_deg,
         fill_mode=fill_mode,
+        path_planning=path_planning,
         min_stitch_mm=MIN_FILL_STITCH_MM,
     )
     min_x, min_y, max_x, max_y = bounds(runs)
@@ -640,6 +645,7 @@ def extract_runs_for_final_size(
             max_stitch_mm=max(max_stitch_mm / scale, 0.1),
             fill_angle_deg=fill_angle_deg,
             fill_mode=fill_mode,
+            path_planning=path_planning,
             min_stitch_mm=max(MIN_FILL_STITCH_MM / scale, 0.01),
         )
     return transform_runs(

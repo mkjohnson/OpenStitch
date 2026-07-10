@@ -123,11 +123,13 @@ def project_settings(
     stitch_perimeter: bool = False,
     perimeter_offset_mm: float = 0.24,
     perimeter_passes: int = 1,
+    path_planning: str = "min_cuts",
 ) -> dict:
     display_units = "sae" if display_units == "sae" else "metric"
     fabric_color = fabric_color if re.match(r"^#[0-9A-Fa-f]{6}$", fabric_color or "") else "#fbfcfa"
     perimeter_offset_mm = max(0.0, min(float(perimeter_offset_mm), 1.5))
     perimeter_passes = max(1, min(int(perimeter_passes), 3))
+    path_planning = path_planning if path_planning in {"fast", "clean_top", "min_cuts"} else "min_cuts"
     return {
         "fit_width_mm": fit_width,
         "fill_spacing_mm": fill_spacing,
@@ -143,6 +145,7 @@ def project_settings(
         "stitch_perimeter": bool(stitch_perimeter),
         "perimeter_offset_mm": perimeter_offset_mm,
         "perimeter_passes": perimeter_passes,
+        "path_planning": path_planning,
     }
 
 
@@ -221,6 +224,7 @@ def project_summary_text(
         f"Stitch color-block perimeter: {'yes' if settings.get('stitch_perimeter') else 'no'}",
         f"Perimeter offset: {float(settings.get('perimeter_offset_mm', 0.24)):.2f} mm",
         f"Perimeter passes: {int(settings.get('perimeter_passes', 1))}",
+        f"Path planning: {settings.get('path_planning', 'min_cuts')}",
         "",
     ]
     return "\n".join(lines)
@@ -268,6 +272,7 @@ def coerce_project_settings(settings: dict) -> dict:
     display_units = str(settings.get("display_units") or "metric")
     fabric_color = str(settings.get("fabric_color") or "#fbfcfa")
     stitch_perimeter = bool(settings.get("stitch_perimeter", False))
+    path_planning = str(settings.get("path_planning") or "min_cuts")
     fit_width = settings.get("fit_width_mm", 90.0)
     fit_width = None if fit_width in {"", None} else float(fit_width)
     if fit_width is not None and fit_width <= 0:
@@ -285,6 +290,7 @@ def coerce_project_settings(settings: dict) -> dict:
         display_units=display_units,
         fabric_color=fabric_color,
         stitch_perimeter=stitch_perimeter,
+        path_planning=path_planning,
     )
 
 
@@ -472,6 +478,7 @@ class ViewerHandler(SimpleHTTPRequestHandler):
         display_units = settings.get("display_units", "metric")
         fabric_color = settings.get("fabric_color", "#fbfcfa")
         stitch_perimeter = bool(settings.get("stitch_perimeter", False))
+        path_planning = str(settings.get("path_planning", "min_cuts"))
         pes_href = None
         viewer_source = source_path
         if source_path.suffix.lower() == ".svg":
@@ -488,6 +495,7 @@ class ViewerHandler(SimpleHTTPRequestHandler):
                 color_merge_distance=color_merge_distance,
                 pdf_page=pdf_page,
                 stitch_perimeter=stitch_perimeter,
+                path_planning=path_planning,
             )
             pes_href = pes_path.name
             viewer_source = pes_path
@@ -505,6 +513,7 @@ class ViewerHandler(SimpleHTTPRequestHandler):
                 color_merge_distance=color_merge_distance,
                 pdf_page=pdf_page,
                 stitch_perimeter=stitch_perimeter,
+                path_planning=path_planning,
             )
             pes_href = pes_path.name
             viewer_source = pes_path
@@ -528,6 +537,7 @@ class ViewerHandler(SimpleHTTPRequestHandler):
             source_name=viewer_source.name,
             display_units=display_units,
             fabric_color=fabric_color,
+            path_planning=path_planning,
         )
         html_path.write_text(html_text, encoding="utf-8")
         project_source = viewer_source

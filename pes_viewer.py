@@ -3202,6 +3202,7 @@ def collect_svg_segments(
     fit_width_mm: float | None,
     fit_height_mm: float | None,
     center: bool,
+    path_planning: str = "min_cuts",
 ) -> tuple[list[dict], list[dict], list[dict], dict]:
     runs = extract_runs_for_final_size(
         svg_file,
@@ -3210,6 +3211,7 @@ def collect_svg_segments(
         max_stitch_mm=max_stitch_mm,
         fill_angle_deg=fill_angle_deg,
         fill_mode=fill_mode,
+        path_planning=path_planning,
         fit_width_mm=fit_width_mm,
         fit_height_mm=fit_height_mm,
         center=center,
@@ -3264,7 +3266,7 @@ def collect_svg_segments(
         if previous_point is not None and math.hypot(previous_point[0] - first[0], previous_point[1] - first[1]) > 0.001:
             is_color_travel = pending_travel == "travel_after_color_change"
             travel_distance = math.hypot(previous_point[0] - first[0], previous_point[1] - first[1])
-            can_stitch_travel = not is_color_travel and travel_distance <= max(max_stitch_mm, 0.1)
+            can_stitch_travel = path_planning == "min_cuts" and not is_color_travel and travel_distance <= max(max_stitch_mm, 0.1)
             if can_stitch_travel:
                 segment_start = previous_point
                 for point in split_long_point_span(previous_point, first, max_stitch_mm):
@@ -3480,6 +3482,7 @@ def build_viewer_html(
     display_units: str = "metric",
     fabric_color: str = "#fbfcfa",
     stitch_perimeter: bool = False,
+    path_planning: str = "min_cuts",
 ) -> tuple[str, tuple[float, float, float, float], dict]:
     pattern = None
     if input_file.suffix.lower() == ".svg" and not svg_needs_rasterization(input_file):
@@ -3490,6 +3493,7 @@ def build_viewer_html(
             max_stitch_mm=max_stitch_mm,
             fill_angle_deg=fill_angle_deg,
             fill_mode=fill_mode,
+            path_planning=path_planning,
             fit_width_mm=fit_width_mm,
             fit_height_mm=fit_height_mm,
             center=center,
@@ -3507,6 +3511,7 @@ def build_viewer_html(
             color_merge_distance=color_merge_distance,
             fill_spacing_mm=fill_spacing_mm,
             max_stitch_mm=max_stitch_mm,
+            path_planning=path_planning,
             pdf_page=pdf_page,
             pdf_dpi=pdf_dpi,
             stitch_perimeter=stitch_perimeter,
@@ -3815,6 +3820,7 @@ def write_filtered_pes(
     pdf_dpi: int = 180,
     center: bool = True,
     stitch_perimeter: bool = False,
+    path_planning: str = "min_cuts",
 ) -> None:
     if input_file.suffix.lower() == ".svg" and not svg_needs_rasterization(input_file):
         segments, _, color_blocks, _ = collect_svg_segments(
@@ -3824,6 +3830,7 @@ def write_filtered_pes(
             max_stitch_mm=max_stitch_mm,
             fill_angle_deg=fill_angle_deg,
             fill_mode=fill_mode,
+            path_planning=path_planning,
             fit_width_mm=fit_width_mm,
             fit_height_mm=fit_height_mm,
             center=center,
@@ -3840,6 +3847,7 @@ def write_filtered_pes(
             color_merge_distance=color_merge_distance,
             fill_spacing_mm=fill_spacing_mm,
             max_stitch_mm=max_stitch_mm,
+            path_planning=path_planning,
             pdf_page=pdf_page,
             pdf_dpi=pdf_dpi,
         )
@@ -3892,6 +3900,7 @@ def write_svg_as_pes(
     pdf_dpi: int = 180,
     center: bool = True,
     stitch_perimeter: bool = False,
+    path_planning: str = "min_cuts",
 ) -> None:
     if svg_needs_rasterization(input_file):
         raster_fit_width = fit_width_mm if fit_width_mm is not None else 90.0
@@ -3906,6 +3915,7 @@ def write_svg_as_pes(
             color_merge_distance=color_merge_distance,
             fill_spacing_mm=fill_spacing_mm,
             max_stitch_mm=max_stitch_mm,
+            path_planning=path_planning,
             pdf_page=pdf_page,
             pdf_dpi=pdf_dpi,
         )
@@ -3917,6 +3927,7 @@ def write_svg_as_pes(
         max_stitch_mm=max_stitch_mm,
         fill_angle_deg=fill_angle_deg,
         fill_mode=fill_mode,
+        path_planning=path_planning,
         fit_width_mm=fit_width_mm,
         fit_height_mm=fit_height_mm,
         center=center,

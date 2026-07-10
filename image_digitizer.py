@@ -24,8 +24,11 @@ RASTER_SUFFIXES = IMAGE_SUFFIXES | PDF_SUFFIXES
 def route_planned_runs(
     runs: list[tuple[list[tuple[float, float]], int]],
     start: tuple[float, float] | None = None,
+    mode: str = "min_cuts",
 ) -> list[tuple[list[tuple[float, float]], int]]:
     remaining = [(list(points), row_index) for points, row_index in runs if len(points) >= 2]
+    if mode == "fast":
+        return remaining
     routed: list[tuple[list[tuple[float, float]], int]] = []
     current = start
     while remaining:
@@ -356,6 +359,7 @@ def image_to_segments(
     background_threshold: int = 245,
     color_merge_distance: float = 56.0,
     max_stitch_mm: float = 3.0,
+    path_planning: str = "min_cuts",
     trim_after_mm: float = 12.0,
     detail_px_per_mm: float = 8.0,
     pdf_page: int = 1,
@@ -381,6 +385,8 @@ def image_to_segments(
     fill_mode = fill_mode.lower().strip()
     if fill_mode not in {"horizontal", "tatami", "crosshatch", "mixed", "outline", "contour"}:
         fill_mode = "tatami"
+    if path_planning not in {"fast", "clean_top", "min_cuts"}:
+        path_planning = "min_cuts"
     background_fill_index = next(
         (index for index, color in enumerate(colors) if is_background_color(color, background_threshold)),
         0,
@@ -496,7 +502,7 @@ def image_to_segments(
         if previous_point is not None and math.hypot(previous_point[0] - x1, previous_point[1] - y1) > 0.001:
             should_trim = pending_travel == "travel_after_color_change"
             travel_distance = math.hypot(previous_point[0] - x1, previous_point[1] - y1)
-            can_stitch_travel = not should_trim and travel_distance <= max(max_stitch_mm, 0.1)
+            can_stitch_travel = path_planning == "min_cuts" and not should_trim and travel_distance <= max(max_stitch_mm, 0.1)
             if pending_travel:
                 commands.append(
                     {
@@ -754,7 +760,7 @@ def image_to_segments(
                         y1, y2 = y2, y1
                     planned_runs.append(([(x1, y1), (x2, y2)], row + pass_index))
 
-            for points, row_index in route_planned_runs(planned_runs, start=previous_point):
+            for points, row_index in route_planned_runs(planned_runs, start=previous_point, mode=path_planning):
                 append_run(block, points[0][0], points[0][1], points[-1][0], points[-1][1], row_index)
 
     if not segments:

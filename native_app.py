@@ -23,6 +23,8 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QColorDialog,
     QComboBox,
+    QDialog,
+    QDialogButtonBox,
     QDockWidget,
     QDoubleSpinBox,
     QFileDialog,
@@ -108,6 +110,7 @@ def realistic_preview_image(
     thread_weight: str,
     selected_blocks: set[int] | None = None,
     max_width_px: int = 2600,
+    include_hoop: bool = False,
 ) -> Image.Image:
     min_x, min_y, max_x, max_y = bounds
     design_w = max(max_x - min_x, 1.0)
@@ -132,6 +135,22 @@ def realistic_preview_image(
         weave.line([(0, y), (width, y)], fill=(*dark, 20), width=1)
         if y + 1 < height:
             weave.line([(0, y + 1), (width, y + 1)], fill=(*light, 16), width=1)
+    if include_hoop:
+        hoop_margin = max(10, int(round(scale * 1.2)))
+        hoop_width = max(2, int(round(scale * 0.18)))
+        hoop_shadow = blend_rgb(fabric_rgb, (0, 0, 0), 0.22)
+        weave.rounded_rectangle(
+            [hoop_margin, hoop_margin, width - hoop_margin, height - hoop_margin],
+            radius=max(18, int(round(scale * 2.2))),
+            outline=(*hoop_shadow, 72),
+            width=hoop_width + 2,
+        )
+        weave.rounded_rectangle(
+            [hoop_margin + hoop_width, hoop_margin + hoop_width, width - hoop_margin - hoop_width, height - hoop_margin - hoop_width],
+            radius=max(14, int(round(scale * 2.0))),
+            outline=(*light, 150),
+            width=max(1, hoop_width),
+        )
 
     nominal_thread_width = max(2, int(round(thread_diameter_mm(thread_weight) * scale)))
     # Embroidery thread is round on the spool but flattens under stitch tension.
@@ -568,6 +587,8 @@ class OpenStitchWindow(QMainWindow):
         right.setMinimumWidth(320)
         view_options = self._view_options_panel()
         view_options.setMinimumWidth(240)
+        report = self._report_panel()
+        report.setMinimumWidth(300)
         self.left_dock = QDockWidget("Workspace", self)
         self.left_dock.setObjectName("workspaceDock")
         self.left_dock.setWidget(left)
@@ -599,7 +620,18 @@ class OpenStitchWindow(QMainWindow):
             | QDockWidget.DockWidgetClosable
         )
         self.addDockWidget(Qt.RightDockWidgetArea, self.options_dock)
+        self.report_dock = QDockWidget("Design Report", self)
+        self.report_dock.setObjectName("designReportDock")
+        self.report_dock.setWidget(report)
+        self.report_dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea | Qt.BottomDockWidgetArea)
+        self.report_dock.setFeatures(
+            QDockWidget.DockWidgetMovable
+            | QDockWidget.DockWidgetFloatable
+            | QDockWidget.DockWidgetClosable
+        )
+        self.addDockWidget(Qt.RightDockWidgetArea, self.report_dock)
         self.tabifyDockWidget(self.right_dock, self.options_dock)
+        self.tabifyDockWidget(self.right_dock, self.report_dock)
         self.right_dock.raise_()
         self.resizeDocks([self.left_dock, self.right_dock], [330, 340], Qt.Horizontal)
         self._build_panel_menu()
@@ -633,6 +665,7 @@ class OpenStitchWindow(QMainWindow):
         self.view_menu.addAction(self.left_dock.toggleViewAction())
         self.view_menu.addAction(self.right_dock.toggleViewAction())
         self.view_menu.addAction(self.options_dock.toggleViewAction())
+        self.view_menu.addAction(self.report_dock.toggleViewAction())
         self.view_menu.addSeparator()
 
         float_left = QAction("Float Workspace Panel", self)
@@ -644,6 +677,9 @@ class OpenStitchWindow(QMainWindow):
         float_options = QAction("Float View Options Panel", self)
         float_options.triggered.connect(lambda: self._float_panel(self.options_dock))
         self.view_menu.addAction(float_options)
+        float_report = QAction("Float Design Report Panel", self)
+        float_report.triggered.connect(lambda: self._float_panel(self.report_dock))
+        self.view_menu.addAction(float_report)
 
         dock_all = QAction("Dock All Panels", self)
         dock_all.triggered.connect(self._dock_all_panels)
@@ -658,13 +694,17 @@ class OpenStitchWindow(QMainWindow):
         self.left_dock.setFloating(False)
         self.right_dock.setFloating(False)
         self.options_dock.setFloating(False)
+        self.report_dock.setFloating(False)
         self.addDockWidget(Qt.LeftDockWidgetArea, self.left_dock)
         self.addDockWidget(Qt.RightDockWidgetArea, self.right_dock)
         self.addDockWidget(Qt.RightDockWidgetArea, self.options_dock)
+        self.addDockWidget(Qt.RightDockWidgetArea, self.report_dock)
         self.tabifyDockWidget(self.right_dock, self.options_dock)
+        self.tabifyDockWidget(self.right_dock, self.report_dock)
         self.left_dock.show()
         self.right_dock.show()
         self.options_dock.show()
+        self.report_dock.show()
 
     def _playback_bar(self) -> QWidget:
         bar = QFrame()
@@ -723,6 +763,14 @@ class OpenStitchWindow(QMainWindow):
         self.edit_stitches = QCheckBox("Edit stitches: left draw, right delete")
         self.edit_stitches.setChecked(False)
         self.edit_stitches.stateChanged.connect(self.update_canvas_flags)
+        presets = QHBoxLayout()
+        clean_preview = QPushButton("Clean Preview")
+        clean_preview.clicked.connect(self.apply_clean_preview)
+        diagnostics = QPushButton("Diagnostics")
+        diagnostics.clicked.connect(self.apply_diagnostics_preview)
+        presets.addWidget(clean_preview)
+        presets.addWidget(diagnostics)
+        layout.addLayout(presets)
         layout.addWidget(self.show_jumps)
         layout.addWidget(self.show_points)
         layout.addWidget(self.show_markers)
@@ -780,6 +828,11 @@ class OpenStitchWindow(QMainWindow):
         self.perimeter_passes.setValue(1)
         self.fill_mode = QComboBox()
         self.fill_mode.addItems(["mixed", "contour", "tatami", "crosshatch", "horizontal", "outline"])
+        self.path_planning = QComboBox()
+        self.path_planning.addItem("Fast", "fast")
+        self.path_planning.addItem("Clean Top Stitch", "clean_top")
+        self.path_planning.addItem("Min Cuts", "min_cuts")
+        self.path_planning.setCurrentIndex(2)
         self.fill_angle = QDoubleSpinBox()
         self.fill_angle.setRange(-90, 90)
         self.fill_angle.setSingleStep(5)
@@ -801,6 +854,7 @@ class OpenStitchWindow(QMainWindow):
         form.addRow("Perimeter offset", self.perimeter_offset)
         form.addRow("Perimeter passes", self.perimeter_passes)
         form.addRow("Fill mode", self.fill_mode)
+        form.addRow("Path planning", self.path_planning)
         form.addRow("Fill angle", self.fill_angle)
         form.addRow("Max colors", self.max_colors)
         form.addRow("Color flattening", self.color_merge)
@@ -824,12 +878,10 @@ class OpenStitchWindow(QMainWindow):
         email_project = QPushButton("Email Project")
         email_project.clicked.connect(self.email_project)
         actions_layout.addWidget(open_button)
-        file_buttons = QHBoxLayout()
-        file_buttons.addWidget(save_pes)
-        file_buttons.addWidget(save_project)
-        file_buttons.addWidget(export_preview)
-        file_buttons.addWidget(email_project)
-        actions_layout.addLayout(file_buttons)
+        actions_layout.addWidget(save_pes)
+        actions_layout.addWidget(save_project)
+        actions_layout.addWidget(export_preview)
+        actions_layout.addWidget(email_project)
         layout.addWidget(actions_box)
         safe_density = QPushButton("Apply Safer Density")
         safe_density.clicked.connect(self.apply_safer_density)
@@ -841,12 +893,41 @@ class OpenStitchWindow(QMainWindow):
         self.color_preview_label.setWordWrap(True)
         self.color_preview_label.setTextFormat(Qt.RichText)
         layout.addWidget(self.color_preview_label)
+        layout.addStretch(1)
+        return panel
+
+    def _report_panel(self) -> QWidget:
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+        layout.addWidget(QLabel("Design Report"))
         self.stats_label = QLabel("No design loaded.")
         self.stats_label.setWordWrap(True)
         self.stats_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        layout.addWidget(self.stats_label)
-        layout.addStretch(1)
+        report_scroll = QScrollArea()
+        report_scroll.setWidgetResizable(True)
+        report_scroll.setFrameShape(QFrame.NoFrame)
+        report_body = QWidget()
+        report_body_layout = QVBoxLayout(report_body)
+        report_body_layout.setContentsMargins(0, 0, 0, 0)
+        report_body_layout.addWidget(self.stats_label)
+        report_body_layout.addStretch(1)
+        report_scroll.setWidget(report_body)
+        layout.addWidget(report_scroll, 1)
         return panel
+
+    def apply_clean_preview(self) -> None:
+        self.show_jumps.setChecked(False)
+        self.show_points.setChecked(False)
+        self.show_markers.setChecked(False)
+        self.edit_stitches.setChecked(False)
+        self.update_canvas_flags()
+
+    def apply_diagnostics_preview(self) -> None:
+        self.show_jumps.setChecked(True)
+        self.show_points.setChecked(True)
+        self.show_markers.setChecked(True)
+        self.edit_stitches.setChecked(False)
+        self.update_canvas_flags()
 
     def _connect_setting_refresh(self) -> None:
         for widget in [
@@ -863,6 +944,7 @@ class OpenStitchWindow(QMainWindow):
         self.max_colors.valueChanged.connect(self.schedule_refresh)
         self.pdf_page.valueChanged.connect(self.schedule_refresh)
         self.fill_mode.currentTextChanged.connect(self.schedule_refresh)
+        self.path_planning.currentIndexChanged.connect(self.schedule_refresh)
 
     def _library_tab(self) -> QWidget:
         panel = QWidget()
@@ -1065,6 +1147,7 @@ class OpenStitchWindow(QMainWindow):
             stitch_perimeter=self.stitch_perimeter.isChecked() if hasattr(self, "stitch_perimeter") else False,
             perimeter_offset_mm=self.perimeter_offset.value() if hasattr(self, "perimeter_offset") else 0.24,
             perimeter_passes=self.perimeter_passes.value() if hasattr(self, "perimeter_passes") else 1,
+            path_planning=str(self.path_planning.currentData() or "min_cuts") if hasattr(self, "path_planning") else "min_cuts",
         )
         settings["thread_brand"] = self.selected_thread_brand()
         if self.state is not None and self.state.settings.get("_preserve_block_filter"):
@@ -1117,6 +1200,11 @@ class OpenStitchWindow(QMainWindow):
                 self.perimeter_offset.setValue(float(settings.get("perimeter_offset_mm", 0.24)))
             if hasattr(self, "perimeter_passes"):
                 self.perimeter_passes.setValue(int(settings.get("perimeter_passes", 1)))
+            if hasattr(self, "path_planning"):
+                planning = str(settings.get("path_planning", "min_cuts"))
+                index = self.path_planning.findData(planning)
+                if index >= 0:
+                    self.path_planning.setCurrentIndex(index)
             if hasattr(self, "thread_brand"):
                 index = self.thread_brand.findData(str(settings.get("thread_brand", "Floriani")))
                 if index >= 0:
@@ -1419,6 +1507,7 @@ class OpenStitchWindow(QMainWindow):
                 max_stitch_mm=float(settings["max_stitch_mm"]),
                 fill_angle_deg=float(settings["fill_angle_deg"]),
                 fill_mode=str(settings["fill_mode"]),
+                path_planning=str(settings.get("path_planning", "min_cuts")),
                 fit_width_mm=settings.get("fit_width_mm"),
                 fit_height_mm=None,
                 center=True,
@@ -1431,6 +1520,7 @@ class OpenStitchWindow(QMainWindow):
                 max_colors=int(settings["max_colors"]),
                 fill_mode=str(settings["fill_mode"]),
                 fill_angle_deg=float(settings["fill_angle_deg"]),
+                path_planning=str(settings.get("path_planning", "min_cuts")),
                 color_merge_distance=float(settings["color_merge_distance"]),
                 fill_spacing_mm=float(settings["fill_spacing_mm"]),
                 max_stitch_mm=float(settings["max_stitch_mm"]),
@@ -1500,6 +1590,7 @@ class OpenStitchWindow(QMainWindow):
             f"Size: {width_mm:.1f} x {height_mm:.1f} mm\n"
             f"Machine fit: {frame_note}\n"
             f"Fill types: {fill_types['summary']}\n"
+            f"Path planning: {self.state.settings.get('path_planning', 'min_cuts')}\n"
             f"Needle points: {counts.get('needle_points', 0)}\n"
             f"Jumps: {counts.get('jumps', 0)}  Trims: {counts.get('trims', 0)}  "
             f"Color changes: {counts.get('color_changes', 0)}\n"
@@ -1773,6 +1864,51 @@ class OpenStitchWindow(QMainWindow):
         if self.state is None:
             QMessageBox.information(self, "OpenStitch", "Open a design first.")
             return
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Realistic Screenshot")
+        layout = QVBoxLayout(dialog)
+        form = QFormLayout()
+        fabric_input = QLineEdit(str(self.state.settings.get("fabric_color", "#fbfcfa")))
+        fabric_button = QPushButton("Choose")
+        fabric_row = QHBoxLayout()
+        fabric_row.addWidget(fabric_input, 1)
+        fabric_row.addWidget(fabric_button)
+        thread_weight = QComboBox()
+        thread_weight.addItem("40 wt polyester/rayon", "40wt")
+        thread_weight.addItem("30 wt thicker thread", "30wt")
+        thread_weight.addItem("60 wt fine thread", "60wt")
+        current_weight = str(self.state.settings.get("thread_weight", DEFAULT_THREAD_WEIGHT))
+        weight_index = thread_weight.findData(current_weight)
+        if weight_index >= 0:
+            thread_weight.setCurrentIndex(weight_index)
+        output_width = QSpinBox()
+        output_width.setRange(900, 4200)
+        output_width.setSingleStep(100)
+        output_width.setSuffix(" px")
+        output_width.setValue(2600)
+        include_hoop = QCheckBox("Show hoop/fabric frame")
+        include_hoop.setChecked(True)
+
+        def choose_export_fabric() -> None:
+            color = QColorDialog.getColor(QColor(fabric_input.text()), dialog, "Choose screenshot fabric color")
+            if color.isValid():
+                fabric_input.setText(color.name())
+
+        fabric_button.clicked.connect(choose_export_fabric)
+        form.addRow("Fabric color", fabric_row)
+        form.addRow("Thread thickness", thread_weight)
+        form.addRow("Image width", output_width)
+        form.addRow("", include_hoop)
+        layout.addLayout(form)
+        hint = QLabel("Exports the current selected color blocks as a presentation PNG with simulated thread thickness, shadow, sheen, and fabric texture.")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        if dialog.exec() != QDialog.Accepted:
+            return
         target, _ = QFileDialog.getSaveFileName(
             self,
             "Export realistic preview",
@@ -1785,9 +1921,11 @@ class OpenStitchWindow(QMainWindow):
             image = realistic_preview_image(
                 self.state.segments,
                 self.state.bounds,
-                fabric_color=str(self.state.settings.get("fabric_color", "#fbfcfa")),
-                thread_weight=str(self.state.settings.get("thread_weight", DEFAULT_THREAD_WEIGHT)),
+                fabric_color=fabric_input.text().strip(),
+                thread_weight=str(thread_weight.currentData() or DEFAULT_THREAD_WEIGHT),
                 selected_blocks=self.selected_blocks(),
+                max_width_px=output_width.value(),
+                include_hoop=include_hoop.isChecked(),
             )
             image.save(target)
             QMessageBox.information(self, "OpenStitch", f"Saved {target}")
