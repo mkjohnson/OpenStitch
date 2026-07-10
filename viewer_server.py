@@ -123,14 +123,14 @@ def project_settings(
     stitch_perimeter: bool = False,
     perimeter_offset_mm: float = 0.24,
     perimeter_passes: int = 1,
-    path_planning: str = "min_cuts",
+    path_planning: str = "clean_top",
     min_stitch: float = 0.3,
 ) -> dict:
     display_units = "sae" if display_units == "sae" else "metric"
     fabric_color = fabric_color if re.match(r"^#[0-9A-Fa-f]{6}$", fabric_color or "") else "#fbfcfa"
     perimeter_offset_mm = max(0.0, min(float(perimeter_offset_mm), 1.5))
     perimeter_passes = max(1, min(int(perimeter_passes), 3))
-    path_planning = path_planning if path_planning in {"fast", "clean_top", "min_cuts"} else "min_cuts"
+    path_planning = path_planning if path_planning in {"fast", "clean_top", "min_cuts"} else "clean_top"
     min_stitch = max(0.05, min(float(min_stitch), 1.0))
     return {
         "fit_width_mm": fit_width,
@@ -227,7 +227,7 @@ def project_summary_text(
         f"Stitch color-block perimeter: {'yes' if settings.get('stitch_perimeter') else 'no'}",
         f"Perimeter offset: {float(settings.get('perimeter_offset_mm', 0.24)):.2f} mm",
         f"Perimeter passes: {int(settings.get('perimeter_passes', 1))}",
-        f"Path planning: {settings.get('path_planning', 'min_cuts')}",
+        f"Path planning: {settings.get('path_planning', 'clean_top')}",
         "",
     ]
     return "\n".join(lines)
@@ -278,7 +278,7 @@ def coerce_project_settings(settings: dict) -> dict:
     display_units = str(settings.get("display_units") or "metric")
     fabric_color = str(settings.get("fabric_color") or "#fbfcfa")
     stitch_perimeter = bool(settings.get("stitch_perimeter", False))
-    path_planning = str(settings.get("path_planning") or "min_cuts")
+    path_planning = str(settings.get("path_planning") or "clean_top")
     fit_width = settings.get("fit_width_mm", 90.0)
     fit_width = None if fit_width in {"", None} else float(fit_width)
     if fit_width is not None and fit_width <= 0:
@@ -485,7 +485,7 @@ class ViewerHandler(SimpleHTTPRequestHandler):
         display_units = settings.get("display_units", "metric")
         fabric_color = settings.get("fabric_color", "#fbfcfa")
         stitch_perimeter = bool(settings.get("stitch_perimeter", False))
-        path_planning = str(settings.get("path_planning", "min_cuts"))
+        path_planning = str(settings.get("path_planning", "clean_top"))
         pes_href = None
         viewer_source = source_path
         if source_path.suffix.lower() == ".svg":

@@ -839,7 +839,7 @@ class OpenStitchWindow(QMainWindow):
         self.path_planning.addItem("Fast", "fast")
         self.path_planning.addItem("Clean Top Stitch", "clean_top")
         self.path_planning.addItem("Min Cuts", "min_cuts")
-        self.path_planning.setCurrentIndex(2)
+        self.path_planning.setCurrentIndex(1)
         self.fill_angle = QDoubleSpinBox()
         self.fill_angle.setRange(-90, 90)
         self.fill_angle.setSingleStep(5)
@@ -1157,7 +1157,7 @@ class OpenStitchWindow(QMainWindow):
             stitch_perimeter=self.stitch_perimeter.isChecked() if hasattr(self, "stitch_perimeter") else False,
             perimeter_offset_mm=self.perimeter_offset.value() if hasattr(self, "perimeter_offset") else 0.24,
             perimeter_passes=self.perimeter_passes.value() if hasattr(self, "perimeter_passes") else 1,
-            path_planning=str(self.path_planning.currentData() or "min_cuts") if hasattr(self, "path_planning") else "min_cuts",
+            path_planning=str(self.path_planning.currentData() or "clean_top") if hasattr(self, "path_planning") else "clean_top",
         )
         settings["thread_brand"] = self.selected_thread_brand()
         if self.state is not None and self.state.settings.get("_preserve_block_filter"):
@@ -1213,7 +1213,7 @@ class OpenStitchWindow(QMainWindow):
             if hasattr(self, "perimeter_passes"):
                 self.perimeter_passes.setValue(int(settings.get("perimeter_passes", 1)))
             if hasattr(self, "path_planning"):
-                planning = str(settings.get("path_planning", "min_cuts"))
+                planning = str(settings.get("path_planning", "clean_top"))
                 index = self.path_planning.findData(planning)
                 if index >= 0:
                     self.path_planning.setCurrentIndex(index)
@@ -1520,7 +1520,7 @@ class OpenStitchWindow(QMainWindow):
                 min_stitch_mm=float(settings.get("min_stitch_mm", 0.30)),
                 fill_angle_deg=float(settings["fill_angle_deg"]),
                 fill_mode=str(settings["fill_mode"]),
-                path_planning=str(settings.get("path_planning", "min_cuts")),
+                path_planning=str(settings.get("path_planning", "clean_top")),
                 fit_width_mm=settings.get("fit_width_mm"),
                 fit_height_mm=None,
                 center=True,
@@ -1533,7 +1533,7 @@ class OpenStitchWindow(QMainWindow):
                 max_colors=int(settings["max_colors"]),
                 fill_mode=str(settings["fill_mode"]),
                 fill_angle_deg=float(settings["fill_angle_deg"]),
-                path_planning=str(settings.get("path_planning", "min_cuts")),
+                path_planning=str(settings.get("path_planning", "clean_top")),
                 color_merge_distance=float(settings["color_merge_distance"]),
                 fill_spacing_mm=float(settings["fill_spacing_mm"]),
                 max_stitch_mm=float(settings["max_stitch_mm"]),
@@ -1604,7 +1604,7 @@ class OpenStitchWindow(QMainWindow):
             f"Size: {width_mm:.1f} x {height_mm:.1f} mm\n"
             f"Machine fit: {frame_note}\n"
             f"Fill types: {fill_types['summary']}\n"
-            f"Path planning: {self.state.settings.get('path_planning', 'min_cuts')}\n"
+            f"Path planning: {self.state.settings.get('path_planning', 'clean_top')}\n"
             f"Needle points: {counts.get('needle_points', 0)}\n"
             f"Jumps: {counts.get('jumps', 0)}  Trims: {counts.get('trims', 0)}  "
             f"Color changes: {counts.get('color_changes', 0)}\n"

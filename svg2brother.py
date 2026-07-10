@@ -89,11 +89,73 @@ def distance(a: tuple[float, float], b: tuple[float, float]) -> float:
     return math.hypot(a[0] - b[0], a[1] - b[1])
 
 
+def run_bounds(run: list[tuple[float, float]]) -> tuple[float, float, float, float]:
+    xs = [x for x, _ in run]
+    ys = [y for _, y in run]
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+def bounds_gap(
+    first: tuple[float, float, float, float],
+    second: tuple[float, float, float, float],
+) -> float:
+    dx = max(first[0] - second[2], second[0] - first[2], 0.0)
+    dy = max(first[1] - second[3], second[1] - first[3], 0.0)
+    return math.hypot(dx, dy)
+
+
+def connected_run_groups(
+    runs: list[list[tuple[float, float]]],
+    gap_mm: float = 1.5,
+) -> list[list[list[tuple[float, float]]]]:
+    if len(runs) <= 1:
+        return [runs]
+    parents = list(range(len(runs)))
+    bounds_list = [run_bounds(run) for run in runs]
+    order = sorted(range(len(runs)), key=lambda index: bounds_list[index][0])
+
+    def find(index: int) -> int:
+        while parents[index] != index:
+            parents[index] = parents[parents[index]]
+            index = parents[index]
+        return index
+
+    def union(left: int, right: int) -> None:
+        left_root = find(left)
+        right_root = find(right)
+        if left_root != right_root:
+            parents[right_root] = left_root
+
+    for pos, left_index in enumerate(order):
+        left_bounds = bounds_list[left_index]
+        for right_index in order[pos + 1 :]:
+            right_bounds = bounds_list[right_index]
+            if right_bounds[0] > left_bounds[2] + gap_mm:
+                break
+            if bounds_gap(left_bounds, right_bounds) <= gap_mm:
+                union(left_index, right_index)
+
+    grouped: dict[int, list[list[tuple[float, float]]]] = {}
+    first_seen: dict[int, int] = {}
+    for index, run in enumerate(runs):
+        root = find(index)
+        grouped.setdefault(root, []).append(run)
+        first_seen.setdefault(root, index)
+    return [grouped[root] for root in sorted(grouped, key=lambda root: first_seen[root])]
+
+
+def endpoint_distance_to_group(
+    point: tuple[float, float],
+    group: list[list[tuple[float, float]]],
+) -> float:
+    return min(min(distance(point, run[0]), distance(point, run[-1])) for run in group)
+
+
 def route_point_runs(
     runs: Iterable[list[tuple[float, float]]],
     *,
     start: tuple[float, float] | None = None,
-    mode: str = "min_cuts",
+    mode: str = "clean_top",
 ) -> list[list[tuple[float, float]]]:
     ordered = [list(run) for run in runs if len(run) >= 2]
     if not ordered:
@@ -110,34 +172,45 @@ def route_point_runs(
 
     routed: list[list[tuple[float, float]]] = []
     current = start
-    remaining = ordered
-    while remaining:
+    remaining_groups = connected_run_groups(ordered)
+    while remaining_groups:
         if current is None:
-            run = remaining.pop(0)
+            group = remaining_groups.pop(0)
         else:
-            best_index = 0
-            best_reversed = False
-            best_distance = float("inf")
-            for index, candidate in enumerate(remaining):
-                forward = distance(current, candidate[0])
-                reverse = distance(current, candidate[-1])
-                if forward < best_distance:
-                    best_index = index
-                    best_reversed = False
-                    best_distance = forward
-                if reverse < best_distance:
-                    best_index = index
-                    best_reversed = True
-                    best_distance = reverse
-            run = remaining.pop(best_index)
-            if best_reversed:
-                run.reverse()
-        routed.append(run)
-        current = run[-1]
+            best_group_index = min(
+                range(len(remaining_groups)),
+                key=lambda index: endpoint_distance_to_group(current, remaining_groups[index]),
+            )
+            group = remaining_groups.pop(best_group_index)
+
+        remaining = group
+        while remaining:
+            if current is None:
+                run = remaining.pop(0)
+            else:
+                best_index = 0
+                best_reversed = False
+                best_distance = float("inf")
+                for index, candidate in enumerate(remaining[:LOCAL_ROUTE_LOOKAHEAD]):
+                    forward = distance(current, candidate[0])
+                    reverse = distance(current, candidate[-1])
+                    if forward < best_distance:
+                        best_index = index
+                        best_reversed = False
+                        best_distance = forward
+                    if reverse < best_distance:
+                        best_index = index
+                        best_reversed = True
+                        best_distance = reverse
+                run = remaining.pop(best_index)
+                if best_reversed:
+                    run.reverse()
+            routed.append(run)
+            current = run[-1]
     return routed
 
 
-def route_stitch_runs(runs: Iterable[StitchRun], mode: str = "min_cuts") -> list[StitchRun]:
+def route_stitch_runs(runs: Iterable[StitchRun], mode: str = "clean_top") -> list[StitchRun]:
     if mode == "fast":
         return [run for run in runs if len(run.points_mm) >= 2]
     grouped: dict[str, list[list[tuple[float, float]]]] = {}
@@ -165,6 +238,7 @@ def to_mm(points_px: Iterable[tuple[float, float]]) -> list[tuple[float, float]]
 
 MIN_FILL_STITCH_MM = 0.3
 MIN_DETAIL_RUN_MM = 0.15
+LOCAL_ROUTE_LOOKAHEAD = 24
 
 
 def split_long_stitches(
@@ -487,7 +561,7 @@ def extract_runs(
     max_stitch_mm: float,
     fill_angle_deg: float = 0.0,
     fill_mode: str = "tatami",
-    path_planning: str = "min_cuts",
+    path_planning: str = "clean_top",
     min_stitch_mm: float = MIN_FILL_STITCH_MM,
 ) -> list[StitchRun]:
     svg = SVG.parse(str(svg_file), reify=True)
@@ -617,7 +691,7 @@ def extract_runs_for_final_size(
     center: bool,
     fill_angle_deg: float = 0.0,
     fill_mode: str = "tatami",
-    path_planning: str = "min_cuts",
+    path_planning: str = "clean_top",
     min_stitch_mm: float = MIN_FILL_STITCH_MM,
 ) -> list[StitchRun]:
     runs = extract_runs(

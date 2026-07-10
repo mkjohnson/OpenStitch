@@ -3202,7 +3202,7 @@ def collect_svg_segments(
     fit_width_mm: float | None,
     fit_height_mm: float | None,
     center: bool,
-    path_planning: str = "min_cuts",
+    path_planning: str = "clean_top",
     min_stitch_mm: float = 0.3,
 ) -> tuple[list[dict], list[dict], list[dict], dict]:
     runs = extract_runs_for_final_size(
@@ -3225,6 +3225,7 @@ def collect_svg_segments(
     active_color: str | None = None
     active_block: dict | None = None
     previous_point: tuple[float, float] | None = None
+    previous_run_points: list[tuple[float, float]] | None = None
     pending_travel: str | None = None
     counts = {
         "needle_points": 0,
@@ -3234,6 +3235,36 @@ def collect_svg_segments(
         "color_changes": 0,
         "ends": 0,
     }
+
+    def point_to_line_distance(
+        point: tuple[float, float],
+        line_start: tuple[float, float],
+        line_end: tuple[float, float],
+    ) -> float:
+        span = math.hypot(line_end[0] - line_start[0], line_end[1] - line_start[1])
+        if span <= 0.001:
+            return math.hypot(point[0] - line_start[0], point[1] - line_start[1])
+        return abs(
+            (line_end[0] - line_start[0]) * (line_start[1] - point[1])
+            - (line_start[0] - point[0]) * (line_end[1] - line_start[1])
+        ) / span
+
+    def can_bridge_adjacent_fill_rows(
+        previous_points: list[tuple[float, float]] | None,
+        current_points: list[tuple[float, float]],
+    ) -> bool:
+        if previous_points is None or len(previous_points) < 2 or len(current_points) < 2:
+            return False
+        prev_start, prev_end = previous_points[0], previous_points[-1]
+        curr_start, curr_end = current_points[0], current_points[-1]
+        prev_angle = math.atan2(prev_end[1] - prev_start[1], prev_end[0] - prev_start[0])
+        curr_angle = math.atan2(curr_end[1] - curr_start[1], curr_end[0] - curr_start[0])
+        angle_delta = abs((prev_angle - curr_angle + math.pi) % (2 * math.pi) - math.pi)
+        angle_delta = min(angle_delta, abs(math.pi - angle_delta))
+        if angle_delta > math.radians(18):
+            return False
+        row_gap = point_to_line_distance(curr_start, prev_start, prev_end)
+        return row_gap <= max(fill_spacing_mm * 3.0, 0.8)
 
     for run in runs:
         if len(run.points_mm) < 2:
@@ -3269,7 +3300,15 @@ def collect_svg_segments(
             is_color_travel = pending_travel == "travel_after_color_change"
             travel_distance = math.hypot(previous_point[0] - first[0], previous_point[1] - first[1])
             connector_limit_mm = min(max_stitch_mm, max(fill_spacing_mm * 2.5, 0.65), 1.2)
-            can_stitch_travel = path_planning == "min_cuts" and not is_color_travel and travel_distance <= connector_limit_mm
+            adjacent_fill_bridge = (
+                path_planning in {"clean_top", "min_cuts"}
+                and not is_color_travel
+                and travel_distance <= min(max_stitch_mm, 4.0)
+                and can_bridge_adjacent_fill_rows(previous_run_points, run.points_mm)
+            )
+            can_stitch_travel = (
+                path_planning == "min_cuts" and not is_color_travel and travel_distance <= connector_limit_mm
+            ) or adjacent_fill_bridge
             if can_stitch_travel:
                 segment_start = previous_point
                 for point in split_long_point_span(previous_point, first, max_stitch_mm):
@@ -3367,6 +3406,7 @@ def collect_svg_segments(
                 )
                 segment_start = point
                 previous_point = point
+        previous_run_points = run.points_mm
 
     if not segments:
         raise ValueError("No stitches were generated from the SVG.")
@@ -3486,7 +3526,7 @@ def build_viewer_html(
     display_units: str = "metric",
     fabric_color: str = "#fbfcfa",
     stitch_perimeter: bool = False,
-    path_planning: str = "min_cuts",
+    path_planning: str = "clean_top",
 ) -> tuple[str, tuple[float, float, float, float], dict]:
     pattern = None
     if input_file.suffix.lower() == ".svg" and not svg_needs_rasterization(input_file):
@@ -3827,7 +3867,7 @@ def write_filtered_pes(
     pdf_dpi: int = 180,
     center: bool = True,
     stitch_perimeter: bool = False,
-    path_planning: str = "min_cuts",
+    path_planning: str = "clean_top",
 ) -> None:
     if input_file.suffix.lower() == ".svg" and not svg_needs_rasterization(input_file):
         segments, _, color_blocks, _ = collect_svg_segments(
@@ -3909,7 +3949,7 @@ def write_svg_as_pes(
     pdf_dpi: int = 180,
     center: bool = True,
     stitch_perimeter: bool = False,
-    path_planning: str = "min_cuts",
+    path_planning: str = "clean_top",
 ) -> None:
     if svg_needs_rasterization(input_file):
         raster_fit_width = fit_width_mm if fit_width_mm is not None else 90.0
