@@ -477,7 +477,8 @@ def image_to_segments(
         if previous_point is not None and math.hypot(previous_point[0] - x1, previous_point[1] - y1) > 0.001:
             should_trim = pending_travel == "travel_after_color_change"
             travel_distance = math.hypot(previous_point[0] - x1, previous_point[1] - y1)
-            can_stitch_travel = path_planning == "min_cuts" and not should_trim and travel_distance <= max(max_stitch_mm, 0.1)
+            connector_limit_mm = min(max_stitch_mm, max(fill_spacing_mm * 2.5, 0.65), 1.2)
+            can_stitch_travel = path_planning == "min_cuts" and not should_trim and travel_distance <= connector_limit_mm
             if pending_travel:
                 commands.append(
                     {
