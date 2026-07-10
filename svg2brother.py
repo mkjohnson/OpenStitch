@@ -163,11 +163,12 @@ def route_point_runs(
     if mode == "clean_top":
         routed: list[list[tuple[float, float]]] = []
         current = start
-        for run in ordered:
-            if current is not None and distance(current, run[-1]) < distance(current, run[0]):
-                run.reverse()
-            routed.append(run)
-            current = run[-1]
+        for group in connected_run_groups(ordered):
+            for run in group:
+                if current is not None and distance(current, run[-1]) < distance(current, run[0]):
+                    run.reverse()
+                routed.append(run)
+                current = run[-1]
         return routed
 
     routed: list[list[tuple[float, float]]] = []
