@@ -26,42 +26,17 @@ def route_planned_runs(
     start: tuple[float, float] | None = None,
     mode: str = "min_cuts",
 ) -> list[tuple[list[tuple[float, float]], int]]:
-    remaining = [(list(points), row_index) for points, row_index in runs if len(points) >= 2]
+    ordered = [(list(points), row_index) for points, row_index in runs if len(points) >= 2]
     if mode == "fast":
-        return remaining
+        return ordered
     routed: list[tuple[list[tuple[float, float]], int]] = []
     current = start
-    while remaining:
-        if current is None:
-            best_index = min(
-                range(len(remaining)),
-                key=lambda index: (
-                    min(point[1] for point in remaining[index][0]),
-                    min(point[0] for point in remaining[index][0]),
-                ),
-            )
-            points, row_index = remaining.pop(best_index)
-            routed.append((points, row_index))
-            current = points[-1]
-            continue
-
-        best_index = 0
-        best_reverse = False
-        best_distance = float("inf")
-        for index, (points, _) in enumerate(remaining):
+    for points, row_index in ordered:
+        if current is not None:
             forward = math.hypot(current[0] - points[0][0], current[1] - points[0][1])
             reverse = math.hypot(current[0] - points[-1][0], current[1] - points[-1][1])
-            if forward < best_distance:
-                best_index = index
-                best_reverse = False
-                best_distance = forward
-            if reverse < best_distance:
-                best_index = index
-                best_reverse = True
-                best_distance = reverse
-        points, row_index = remaining.pop(best_index)
-        if best_reverse:
-            points.reverse()
+            if reverse < forward:
+                points.reverse()
         routed.append((points, row_index))
         current = points[-1]
     return routed
