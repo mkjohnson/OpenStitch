@@ -89,6 +89,71 @@ def distance(a: tuple[float, float], b: tuple[float, float]) -> float:
     return math.hypot(a[0] - b[0], a[1] - b[1])
 
 
+def route_point_runs(
+    runs: Iterable[list[tuple[float, float]]],
+    *,
+    start: tuple[float, float] | None = None,
+) -> list[list[tuple[float, float]]]:
+    remaining = [list(run) for run in runs if len(run) >= 2]
+    if not remaining:
+        return []
+    routed: list[list[tuple[float, float]]] = []
+    current = start
+    while remaining:
+        best_index = 0
+        best_reverse = False
+        best_distance = float("inf")
+        if current is None:
+            best_run = min(
+                range(len(remaining)),
+                key=lambda index: (
+                    min(point[1] for point in remaining[index]),
+                    min(point[0] for point in remaining[index]),
+                ),
+            )
+            run = remaining.pop(best_run)
+            routed.append(run)
+            current = run[-1]
+            continue
+        for index, run in enumerate(remaining):
+            forward_distance = distance(current, run[0])
+            reverse_distance = distance(current, run[-1])
+            if forward_distance < best_distance:
+                best_index = index
+                best_reverse = False
+                best_distance = forward_distance
+            if reverse_distance < best_distance:
+                best_index = index
+                best_reverse = True
+                best_distance = reverse_distance
+        run = remaining.pop(best_index)
+        if best_reverse:
+            run.reverse()
+        routed.append(run)
+        current = run[-1]
+    return routed
+
+
+def route_stitch_runs(runs: Iterable[StitchRun]) -> list[StitchRun]:
+    grouped: dict[str, list[list[tuple[float, float]]]] = {}
+    color_order: list[str] = []
+    for run in runs:
+        if len(run.points_mm) < 2:
+            continue
+        if run.color not in grouped:
+            grouped[run.color] = []
+            color_order.append(run.color)
+        grouped[run.color].append(run.points_mm)
+
+    routed: list[StitchRun] = []
+    current: tuple[float, float] | None = None
+    for color in color_order:
+        for points in route_point_runs(grouped[color], start=current):
+            routed.append(StitchRun(color=color, points_mm=points))
+            current = points[-1]
+    return routed
+
+
 def to_mm(points_px: Iterable[tuple[float, float]]) -> list[tuple[float, float]]:
     return [(x / SVG_PX_PER_MM, y / SVG_PX_PER_MM) for x, y in points_px]
 
@@ -490,7 +555,7 @@ def extract_runs(
                     )
                 )
 
-    return runs
+    return route_stitch_runs(runs)
 
 
 def bounds(runs: Iterable[StitchRun]) -> tuple[float, float, float, float]:

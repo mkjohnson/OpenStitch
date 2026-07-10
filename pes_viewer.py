@@ -3260,8 +3260,41 @@ def collect_svg_segments(
 
         assert active_block is not None
         first = run.points_mm[0]
+        connected_to_first = False
         if previous_point is not None and math.hypot(previous_point[0] - first[0], previous_point[1] - first[1]) > 0.001:
             is_color_travel = pending_travel == "travel_after_color_change"
+            travel_distance = math.hypot(previous_point[0] - first[0], previous_point[1] - first[1])
+            can_stitch_travel = not is_color_travel and travel_distance <= max(max_stitch_mm, 0.1)
+            if can_stitch_travel:
+                segment_start = previous_point
+                for point in split_long_point_span(previous_point, first, max_stitch_mm):
+                    counts["needle_points"] += 1
+                    counts["stitch_segments"] += 1
+                    active_block["stitches"] += 1
+                    segments.append(
+                        {
+                            "x1": segment_start[0],
+                            "y1": segment_start[1],
+                            "x2": point[0],
+                            "y2": point[1],
+                            "kind": "stitch",
+                            "color": active_block["color"],
+                            "colorIndex": active_block["thread"],
+                            "blockIndex": active_block["index"],
+                            "step": counts["needle_points"],
+                        }
+                    )
+                    commands.append(
+                        {
+                            "x": point[0],
+                            "y": point[1],
+                            "command": "stitch",
+                            "color": active_block["thread"],
+                            "step": counts["needle_points"],
+                        }
+                    )
+                    segment_start = point
+                connected_to_first = True
             if is_color_travel:
                 counts["trims"] += 1
                 commands.append(
@@ -3273,30 +3306,32 @@ def collect_svg_segments(
                         "step": counts["needle_points"],
                     }
                 )
-            counts["jumps"] += 1
-            segments.append(
+            if not can_stitch_travel:
+                counts["jumps"] += 1
+                segments.append(
+                    {
+                        "x1": previous_point[0],
+                        "y1": previous_point[1],
+                        "x2": first[0],
+                        "y2": first[1],
+                        "kind": pending_travel or "jump",
+                        "color": active_block["color"],
+                        "colorIndex": active_block["thread"],
+                        "blockIndex": active_block["index"],
+                        "step": counts["needle_points"],
+                    }
+                )
+            pending_travel = None
+        if not connected_to_first:
+            commands.append(
                 {
-                    "x1": previous_point[0],
-                    "y1": previous_point[1],
-                    "x2": first[0],
-                    "y2": first[1],
-                    "kind": pending_travel or "jump",
-                    "color": active_block["color"],
-                    "colorIndex": active_block["thread"],
-                    "blockIndex": active_block["index"],
+                    "x": first[0],
+                    "y": first[1],
+                    "command": "jump",
+                    "color": active_block["thread"],
                     "step": counts["needle_points"],
                 }
             )
-            pending_travel = None
-        commands.append(
-            {
-                "x": first[0],
-                "y": first[1],
-                "command": "jump",
-                "color": active_block["thread"],
-                "step": counts["needle_points"],
-            }
-        )
         for start, end in zip(run.points_mm, run.points_mm[1:]):
             segment_start = start
             for point in split_long_point_span(start, end, max_stitch_mm):

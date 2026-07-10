@@ -21,6 +21,49 @@ PDF_SUFFIXES = {".pdf"}
 RASTER_SUFFIXES = IMAGE_SUFFIXES | PDF_SUFFIXES
 
 
+def route_planned_runs(
+    runs: list[tuple[list[tuple[float, float]], int]],
+    start: tuple[float, float] | None = None,
+) -> list[tuple[list[tuple[float, float]], int]]:
+    remaining = [(list(points), row_index) for points, row_index in runs if len(points) >= 2]
+    routed: list[tuple[list[tuple[float, float]], int]] = []
+    current = start
+    while remaining:
+        if current is None:
+            best_index = min(
+                range(len(remaining)),
+                key=lambda index: (
+                    min(point[1] for point in remaining[index][0]),
+                    min(point[0] for point in remaining[index][0]),
+                ),
+            )
+            points, row_index = remaining.pop(best_index)
+            routed.append((points, row_index))
+            current = points[-1]
+            continue
+
+        best_index = 0
+        best_reverse = False
+        best_distance = float("inf")
+        for index, (points, _) in enumerate(remaining):
+            forward = math.hypot(current[0] - points[0][0], current[1] - points[0][1])
+            reverse = math.hypot(current[0] - points[-1][0], current[1] - points[-1][1])
+            if forward < best_distance:
+                best_index = index
+                best_reverse = False
+                best_distance = forward
+            if reverse < best_distance:
+                best_index = index
+                best_reverse = True
+                best_distance = reverse
+        points, row_index = remaining.pop(best_index)
+        if best_reverse:
+            points.reverse()
+        routed.append((points, row_index))
+        current = points[-1]
+    return routed
+
+
 def is_raster_source(path: Path) -> bool:
     return path.suffix.lower() in RASTER_SUFFIXES
 
@@ -449,8 +492,11 @@ def image_to_segments(
         row_index: int,
     ) -> None:
         nonlocal previous_point, pending_travel
+        connected_to_start = False
         if previous_point is not None and math.hypot(previous_point[0] - x1, previous_point[1] - y1) > 0.001:
             should_trim = pending_travel == "travel_after_color_change"
+            travel_distance = math.hypot(previous_point[0] - x1, previous_point[1] - y1)
+            can_stitch_travel = not should_trim and travel_distance <= max(max_stitch_mm, 0.1)
             if pending_travel:
                 commands.append(
                     {
@@ -472,23 +518,43 @@ def image_to_segments(
                         "step": counts["needle_points"],
                     }
                 )
-            commands.append({"x": x1, "y": y1, "command": "jump", "color": block["thread"], "step": counts["needle_points"]})
-            counts["jumps"] += 1
-            segments.append(
-                {
-                    "x1": previous_point[0],
-                    "y1": previous_point[1],
-                    "x2": x1,
-                    "y2": y1,
-                    "kind": pending_travel or "jump",
-                    "color": block["color"],
-                    "colorIndex": block["thread"],
-                    "blockIndex": block["index"],
-                    "step": counts["needle_points"],
-                }
-            )
+            if can_stitch_travel:
+                counts["needle_points"] += 1
+                counts["stitch_segments"] += 1
+                block["stitches"] += 1
+                segments.append(
+                    {
+                        "x1": previous_point[0],
+                        "y1": previous_point[1],
+                        "x2": x1,
+                        "y2": y1,
+                        "kind": "stitch",
+                        "color": block["color"],
+                        "colorIndex": block["thread"],
+                        "blockIndex": block["index"],
+                        "step": counts["needle_points"],
+                    }
+                )
+                commands.append({"x": x1, "y": y1, "command": "stitch", "color": block["thread"], "step": counts["needle_points"]})
+                connected_to_start = True
+            else:
+                commands.append({"x": x1, "y": y1, "command": "jump", "color": block["thread"], "step": counts["needle_points"]})
+                counts["jumps"] += 1
+                segments.append(
+                    {
+                        "x1": previous_point[0],
+                        "y1": previous_point[1],
+                        "x2": x1,
+                        "y2": y1,
+                        "kind": pending_travel or "jump",
+                        "color": block["color"],
+                        "colorIndex": block["thread"],
+                        "blockIndex": block["index"],
+                        "step": counts["needle_points"],
+                    }
+                )
             pending_travel = None
-        if previous_point is None:
+        if previous_point is None and not connected_to_start:
             commands.append({"x": x1, "y": y1, "command": "jump", "color": block["thread"], "step": counts["needle_points"]})
         span = math.hypot(x2 - x1, y2 - y1)
         if span <= 0.001:
@@ -664,6 +730,7 @@ def image_to_segments(
             cos_angle = math.cos(angle)
             sin_angle = math.sin(angle)
 
+            planned_runs: list[tuple[list[tuple[float, float]], int]] = []
             for row in range(0, working_height, row_step_px):
                 ranges: list[tuple[int, int]] = []
                 start: int | None = None
@@ -685,7 +752,10 @@ def image_to_segments(
                     if row % 2:
                         x1, x2 = x2, x1
                         y1, y2 = y2, y1
-                    append_run(block, x1, y1, x2, y2, row + pass_index)
+                    planned_runs.append(([(x1, y1), (x2, y2)], row + pass_index))
+
+            for points, row_index in route_planned_runs(planned_runs, start=previous_point):
+                append_run(block, points[0][0], points[0][1], points[-1][0], points[-1][1], row_index)
 
     if not segments:
         raise ValueError("No stitchable image regions were found.")
