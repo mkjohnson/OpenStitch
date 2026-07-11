@@ -209,6 +209,44 @@ def connected_pixel_components(active: set[tuple[int, int]]) -> list[set[tuple[i
     return components
 
 
+def close_active_pixel_gaps(
+    active: set[tuple[int, int]],
+    width: int,
+    height: int,
+    radius: int = 1,
+) -> set[tuple[int, int]]:
+    if not active or radius <= 0:
+        return set(active)
+    offsets = [
+        (dx, dy)
+        for dy in range(-radius, radius + 1)
+        for dx in range(-radius, radius + 1)
+        if dx * dx + dy * dy <= radius * radius
+    ]
+    dilated = {
+        (col + dx, row + dy)
+        for col, row in active
+        for dx, dy in offsets
+        if 0 <= col + dx < width and 0 <= row + dy < height
+    }
+    return {
+        (col, row)
+        for col, row in dilated
+        if all((col + dx, row + dy) in dilated for dx, dy in offsets)
+    }
+
+
+def stitchable_components(
+    active: set[tuple[int, int]],
+    width: int,
+    height: int,
+    min_component_px: int = 3,
+) -> list[set[tuple[int, int]]]:
+    cleaned = close_active_pixel_gaps(active, width, height, radius=1)
+    components = connected_pixel_components(cleaned)
+    return [component for component in components if len(component) >= min_component_px]
+
+
 def component_centroid(component: set[tuple[int, int]]) -> tuple[float, float]:
     if not component:
         return 0.0, 0.0
@@ -598,7 +636,16 @@ def image_to_segments(
     min_detail_run_px = max(1, int(math.ceil(0.15 * px_per_mm)))
     row_step_px = max(1, int(math.floor(fill_spacing_mm * px_per_mm)))
     fill_mode = fill_mode.lower().strip()
-    if fill_mode not in {"horizontal", "tatami", "crosshatch", "mixed", "outline", "contour"}:
+    if fill_mode not in {
+        "horizontal",
+        "tatami",
+        "island_tatami",
+        "outline_fill",
+        "crosshatch",
+        "mixed",
+        "outline",
+        "contour",
+    }:
         fill_mode = "tatami"
     if path_planning not in {"fast", "clean_top", "min_cuts"}:
         path_planning = "min_cuts"
@@ -731,7 +778,7 @@ def image_to_segments(
         nonlocal previous_point, pending_travel
         connected_to_start = False
         if previous_point is not None and math.hypot(previous_point[0] - x1, previous_point[1] - y1) > 0.001:
-            should_trim = pending_travel == "travel_after_color_change"
+            should_trim = pending_travel in {"travel_after_color_change", "travel_after_trim"}
             travel_distance = math.hypot(previous_point[0] - x1, previous_point[1] - y1)
             connector_limit_mm = min(max_stitch_mm, max(fill_spacing_mm * 4.0, 1.2), 2.0)
             can_stitch_travel = (
@@ -740,7 +787,7 @@ def image_to_segments(
                 and not pending_travel
                 and (force_stitch_travel or travel_distance <= connector_limit_mm)
             )
-            if pending_travel:
+            if pending_travel == "travel_after_color_change":
                 commands.append(
                     {
                         "x": previous_point[0],
@@ -1049,7 +1096,7 @@ def image_to_segments(
                 for col in range(palette_image.width)
                 if pixels[col, row] == palette_index
             }
-            components = connected_pixel_components(active)
+            components = stitchable_components(active, palette_image.width, palette_image.height)
             remaining_components = components
             while remaining_components:
                 if previous_point is None:
@@ -1068,6 +1115,35 @@ def image_to_segments(
                 if fill_mode == "contour":
                     stitch_component_scan_fill(block, component)
                 stitch_boundary_passes(block, component, 1)
+            continue
+
+        if fill_mode in {"outline_fill", "island_tatami"}:
+            pixels = palette_image.load()
+            active = {
+                (col, row)
+                for row in range(palette_image.height)
+                for col in range(palette_image.width)
+                if pixels[col, row] == palette_index
+            }
+            components = stitchable_components(active, palette_image.width, palette_image.height)
+            remaining_components = components
+            while remaining_components:
+                if previous_point is None:
+                    component_index = 0
+                else:
+                    component_index = min(
+                        range(len(remaining_components)),
+                        key=lambda index: math.hypot(
+                            previous_point[0]
+                            - (origin_x + component_centroid(remaining_components[index])[0] / px_per_mm),
+                            previous_point[1]
+                            - (origin_y + component_centroid(remaining_components[index])[1] / px_per_mm),
+                        ),
+                    )
+                component = remaining_components.pop(component_index)
+                stitch_component_scan_fill(block, component)
+                if remaining_components:
+                    pending_travel = "travel_after_trim"
             continue
 
         block_stitch_angles = [best_raster_angle(palette_index)] if fill_mode == "mixed" else stitch_angles
