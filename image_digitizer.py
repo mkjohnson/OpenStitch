@@ -256,27 +256,26 @@ def route_planned_runs(
                 ),
             )
             group = remaining_groups.pop(best_group_index)
-        remaining = group
-        while remaining:
-            if current is None:
-                points, row_index = remaining.pop(0)
-            else:
-                best_index = 0
-                best_reversed = False
-                best_distance = float("inf")
-                for index, (candidate, _) in enumerate(remaining):
-                    forward = math.hypot(current[0] - candidate[0][0], current[1] - candidate[0][1])
-                    reverse = math.hypot(current[0] - candidate[-1][0], current[1] - candidate[-1][1])
-                    if forward < best_distance:
-                        best_index = index
-                        best_reversed = False
-                        best_distance = forward
-                    if reverse < best_distance:
-                        best_index = index
-                        best_reversed = True
-                        best_distance = reverse
-                points, row_index = remaining.pop(best_index)
-                if best_reversed:
+
+        if current is not None and group:
+            first_points = group[0][0]
+            last_points = group[-1][0]
+            group_start = min(
+                math.hypot(current[0] - first_points[0][0], current[1] - first_points[0][1]),
+                math.hypot(current[0] - first_points[-1][0], current[1] - first_points[-1][1]),
+            )
+            group_end = min(
+                math.hypot(current[0] - last_points[0][0], current[1] - last_points[0][1]),
+                math.hypot(current[0] - last_points[-1][0], current[1] - last_points[-1][1]),
+            )
+            if group_end < group_start:
+                group = list(reversed(group))
+
+        for points, row_index in group:
+            if current is not None:
+                forward = math.hypot(current[0] - points[0][0], current[1] - points[0][1])
+                reverse = math.hypot(current[0] - points[-1][0], current[1] - points[-1][1])
+                if reverse < forward:
                     points.reverse()
             routed.append((points, row_index))
             current = points[-1]
@@ -718,7 +717,7 @@ def image_to_segments(
         if previous_point is not None and math.hypot(previous_point[0] - x1, previous_point[1] - y1) > 0.001:
             should_trim = pending_travel == "travel_after_color_change"
             travel_distance = math.hypot(previous_point[0] - x1, previous_point[1] - y1)
-            connector_limit_mm = min(max_stitch_mm, max(fill_spacing_mm * 2.5, 0.65), 1.2)
+            connector_limit_mm = min(max_stitch_mm, max(fill_spacing_mm * 4.0, 1.2), 2.0)
             can_stitch_travel = path_planning == "min_cuts" and not should_trim and travel_distance <= connector_limit_mm
             if pending_travel:
                 commands.append(

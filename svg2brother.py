@@ -110,28 +110,17 @@ def route_point_runs(
 
     routed: list[list[tuple[float, float]]] = []
     current = start
-    remaining = ordered
-    while remaining:
-        if current is None:
-            run = remaining.pop(0)
-        else:
-            best_index = 0
-            best_reversed = False
-            best_distance = float("inf")
-            for index, candidate in enumerate(remaining):
-                forward = distance(current, candidate[0])
-                reverse = distance(current, candidate[-1])
-                if forward < best_distance:
-                    best_index = index
-                    best_reversed = False
-                    best_distance = forward
-                if reverse < best_distance:
-                    best_index = index
-                    best_reversed = True
-                    best_distance = reverse
-            run = remaining.pop(best_index)
-            if best_reversed:
-                run.reverse()
+    if current is not None and len(ordered) > 1:
+        first = ordered[0]
+        last = ordered[-1]
+        start_distance = min(distance(current, first[0]), distance(current, first[-1]))
+        end_distance = min(distance(current, last[0]), distance(current, last[-1]))
+        if end_distance < start_distance:
+            ordered.reverse()
+
+    for run in ordered:
+        if current is not None and distance(current, run[-1]) < distance(current, run[0]):
+            run.reverse()
         routed.append(run)
         current = run[-1]
     return routed
