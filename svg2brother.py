@@ -548,7 +548,7 @@ def mixed_hatch_compound_fill(
         polygon_list,
         spacing_mm,
         max_stitch_mm,
-        fill_angle_deg,
+        0.0,
         min_stitch_mm=min_stitch_mm,
     )
 

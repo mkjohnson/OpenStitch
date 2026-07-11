@@ -1027,7 +1027,7 @@ class OpenStitchWindow(QMainWindow):
         self.fill_angle = QDoubleSpinBox()
         self.fill_angle.setRange(-90, 90)
         self.fill_angle.setSingleStep(5)
-        self.fill_angle.setValue(45)
+        self.fill_angle.setValue(0)
         self.fill_angle.setSuffix(" deg")
         self.max_colors = QSpinBox()
         self.max_colors.setRange(2, 16)
