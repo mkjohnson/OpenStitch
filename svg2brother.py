@@ -126,7 +126,29 @@ def route_point_runs(
     return routed
 
 
-def route_stitch_runs(runs: Iterable[StitchRun], mode: str = "min_cuts") -> list[StitchRun]:
+def connector_points(
+    start: tuple[float, float],
+    end: tuple[float, float],
+    max_stitch_mm: float,
+) -> list[tuple[float, float]]:
+    span = distance(start, end)
+    if span <= 0.001:
+        return []
+    steps = max(1, int(math.ceil(span / max(max_stitch_mm, 0.1))))
+    return [
+        (
+            start[0] + (end[0] - start[0]) * (index / steps),
+            start[1] + (end[1] - start[1]) * (index / steps),
+        )
+        for index in range(1, steps + 1)
+    ]
+
+
+def route_stitch_runs(
+    runs: Iterable[StitchRun],
+    mode: str = "min_cuts",
+    max_stitch_mm: float = 7.0,
+) -> list[StitchRun]:
     if mode == "fast":
         return [run for run in runs if len(run.points_mm) >= 2]
     grouped: dict[str, list[list[tuple[float, float]]]] = {}
@@ -142,9 +164,20 @@ def route_stitch_runs(runs: Iterable[StitchRun], mode: str = "min_cuts") -> list
     routed: list[StitchRun] = []
     current: tuple[float, float] | None = None
     for color in color_order:
+        merged_points: list[tuple[float, float]] | None = None
         for points in route_point_runs(grouped[color], start=current, mode=mode):
-            routed.append(StitchRun(color=color, points_mm=points))
+            if mode == "fast":
+                routed.append(StitchRun(color=color, points_mm=points))
+                current = points[-1]
+                continue
+            if merged_points is None:
+                merged_points = list(points)
+            else:
+                merged_points.extend(connector_points(merged_points[-1], points[0], max_stitch_mm))
+                merged_points.extend(points[1:])
             current = points[-1]
+        if merged_points:
+            routed.append(StitchRun(color=color, points_mm=merged_points))
     return routed
 
 
@@ -277,16 +310,13 @@ def connect_adjacent_fill_rows(
     polygons: list[list[tuple[float, float]]],
     max_stitch_mm: float,
     spacing_mm: float,
+    connector_limit_mm: float | None = None,
 ) -> list[list[tuple[float, float]]]:
     connected: list[list[tuple[float, float]]] = []
     current: list[tuple[float, float]] | None = None
-    connector_limit = max(spacing_mm * 3.0, 0.8)
+    connector_limit = connector_limit_mm if connector_limit_mm is not None else max(spacing_mm * 3.0, 0.8)
     for row in rows:
         if current is None:
-            current = list(row)
-            continue
-        if distance(current[-1], row[0]) > connector_limit:
-            connected.append(current)
             current = list(row)
             continue
         connector = split_long_stitches([current[-1], row[0]], max_stitch_mm)
@@ -295,6 +325,36 @@ def connect_adjacent_fill_rows(
     if current:
         connected.append(current)
     return connected
+
+
+def split_rows_into_side_lanes(
+    rows: list[list[tuple[float, float]]],
+    spacing_mm: float,
+    max_stitch_mm: float,
+    min_stitch_mm: float,
+) -> list[list[tuple[float, float]]]:
+    left_lane: list[list[tuple[float, float]]] = []
+    right_lane: list[list[tuple[float, float]]] = []
+    for row_index, row in enumerate(rows):
+        xs = [x for x, _ in row]
+        ys = [y for _, y in row]
+        left = min(xs)
+        right = max(xs)
+        y = sum(ys) / len(ys)
+        if right - left < max(min_stitch_mm * 2.5, spacing_mm * 3.0):
+            continue
+        middle = (left + right) / 2
+        left_run = split_long_stitches([(left, y), (middle, y)], max_stitch_mm, min_stitch_mm=min_stitch_mm)
+        right_run = split_long_stitches([(middle, y), (right, y)], max_stitch_mm, min_stitch_mm=min_stitch_mm)
+        if row_index % 2:
+            left_run.reverse()
+            right_run.reverse()
+        if len(left_run) >= 2:
+            left_lane.append(left_run)
+        if len(right_run) >= 2:
+            right_lane.append(right_run)
+    right_lane.reverse()
+    return left_lane + right_lane
 
 
 def row_bounds(row: list[tuple[float, float]]) -> tuple[float, float, float, float]:
@@ -368,6 +428,7 @@ def hatch_compound_fill(
     max_stitch_mm: float,
     fill_angle_deg: float = 0.0,
     min_stitch_mm: float = MIN_FILL_STITCH_MM,
+    side_lanes: bool = False,
 ) -> list[list[tuple[float, float]]]:
     closed_polygons: list[list[tuple[float, float]]] = []
     for polygon in polygons:
@@ -427,9 +488,20 @@ def hatch_compound_fill(
             row_index += 1
         y += max(spacing_mm, 0.1)
 
+    connector_limit_mm: float | None = None
+    if side_lanes and abs(angle_rad) <= 1e-6:
+        xs = [x for row in rows for x, _ in row]
+        ys = [y for row in rows for _, y in row]
+        width = max(xs) - min(xs) if xs else 0.0
+        height = max(ys) - min(ys) if ys else 0.0
+        aspect = width / height if height > 0 else 0.0
+        if width >= 5.0 and height >= 5.0 and 0.55 <= aspect <= 1.8:
+            rows = split_rows_into_side_lanes(rows, spacing_mm, max_stitch_mm, min_stitch_mm)
+            connector_limit_mm = max(spacing_mm * 8.0, 2.5)
+
     clustered_rows: list[list[tuple[float, float]]] = []
     for cluster in cluster_hatch_rows(rows, spacing_mm):
-        clustered_rows.extend(connect_adjacent_fill_rows(cluster, closed_polygons, max_stitch_mm, spacing_mm))
+        clustered_rows.extend(connect_adjacent_fill_rows(cluster, closed_polygons, max_stitch_mm, spacing_mm, connector_limit_mm))
     rows = clustered_rows
     if abs(angle_rad) > 1e-6:
         rows = [[rotate_point(point, angle_rad, origin) for point in row] for row in rows]
@@ -550,12 +622,13 @@ def mixed_hatch_compound_fill(
     polygon_list = [polygon for polygon in polygons if len(polygon) >= 3]
     if not polygon_list:
         return []
-    return optimized_hatch_compound_fill(
+    return hatch_compound_fill(
         polygon_list,
         spacing_mm,
         max_stitch_mm,
         0.0,
         min_stitch_mm=min_stitch_mm,
+        side_lanes=True,
     )
 
 
@@ -726,7 +799,7 @@ def extract_runs(
                     )
                 )
 
-    return route_stitch_runs(runs, mode=path_planning)
+    return route_stitch_runs(runs, mode=path_planning, max_stitch_mm=max_stitch_mm)
 
 
 def bounds(runs: Iterable[StitchRun]) -> tuple[float, float, float, float]:
