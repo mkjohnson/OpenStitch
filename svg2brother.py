@@ -220,6 +220,55 @@ def point_in_compound_fill(point: tuple[float, float], polygons: list[list[tuple
     return inside_count % 2 == 1
 
 
+def polygon_abs_area(polygon: list[tuple[float, float]]) -> float:
+    area = 0.0
+    for (x1, y1), (x2, y2) in zip(polygon, polygon[1:]):
+        area += (x1 * y2) - (x2 * y1)
+    return abs(area) / 2.0
+
+
+def close_polygon(polygon: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    if len(polygon) >= 3 and distance(polygon[0], polygon[-1]) > 0.01:
+        return [*polygon, polygon[0]]
+    return polygon
+
+
+def compound_fill_components(polygons: Iterable[list[tuple[float, float]]]) -> list[list[list[tuple[float, float]]]]:
+    closed = [close_polygon(polygon) for polygon in polygons if len(polygon) >= 3]
+    if not closed:
+        return []
+    areas = [polygon_abs_area(polygon) for polygon in closed]
+    parents: list[int | None] = []
+    for index, polygon in enumerate(closed):
+        point = polygon[0]
+        parent: int | None = None
+        parent_area = float("inf")
+        for candidate_index, candidate in enumerate(closed):
+            if candidate_index == index or areas[candidate_index] <= areas[index]:
+                continue
+            if areas[candidate_index] < parent_area and point_in_polygon(point, candidate):
+                parent = candidate_index
+                parent_area = areas[candidate_index]
+        parents.append(parent)
+
+    roots: list[int] = []
+    for index, parent in enumerate(parents):
+        if parent is None:
+            roots.append(index)
+
+    components: list[list[list[tuple[float, float]]]] = []
+    for root in roots:
+        component: list[list[tuple[float, float]]] = []
+        for index, polygon in enumerate(closed):
+            ancestor = index
+            while parents[ancestor] is not None:
+                ancestor = parents[ancestor]  # type: ignore[assignment]
+            if ancestor == root:
+                component.append(polygon)
+        components.append(component)
+    return components
+
+
 def segment_inside_compound_fill(
     start: tuple[float, float],
     end: tuple[float, float],
@@ -592,20 +641,21 @@ def extract_runs(
         subpaths_mm = [to_mm(subpath_px) for subpath_px in flatten_path(path, sample_step_px)]
         if filled and fill_mode not in {"outline", "contour"}:
             fill_polygons = [subpath_mm for subpath_mm in subpaths_mm if len(subpath_mm) >= 3]
-            if fill_mode == "mixed":
-                fill_rows = mixed_hatch_compound_fill(
-                    fill_polygons,
-                    fill_spacing_mm,
-                    max_stitch_mm,
-                    fill_angle_deg,
-                    min_stitch_mm=min_stitch_mm,
-                )
-                for row in fill_rows:
-                    runs.append(StitchRun(color=color, points_mm=row))
-            else:
+            for component in compound_fill_components(fill_polygons):
+                if fill_mode == "mixed":
+                    fill_rows = mixed_hatch_compound_fill(
+                        component,
+                        fill_spacing_mm,
+                        max_stitch_mm,
+                        fill_angle_deg,
+                        min_stitch_mm=min_stitch_mm,
+                    )
+                    for row in fill_rows:
+                        runs.append(StitchRun(color=color, points_mm=row))
+                    continue
                 for angle in fill_angles:
                     fill_rows = optimized_hatch_compound_fill(
-                        fill_polygons,
+                        component,
                         fill_spacing_mm,
                         max_stitch_mm,
                         angle,
