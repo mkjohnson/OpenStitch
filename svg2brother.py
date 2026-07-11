@@ -311,6 +311,62 @@ def connect_adjacent_fill_rows(
     return connected
 
 
+def row_bounds(row: list[tuple[float, float]]) -> tuple[float, float, float, float]:
+    xs = [x for x, _ in row]
+    ys = [y for _, y in row]
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+def row_bounds_gap(
+    first: tuple[float, float, float, float],
+    second: tuple[float, float, float, float],
+) -> float:
+    dx = max(first[0] - second[2], second[0] - first[2], 0.0)
+    dy = max(first[1] - second[3], second[1] - first[3], 0.0)
+    return math.hypot(dx, dy)
+
+
+def cluster_hatch_rows(
+    rows: list[list[tuple[float, float]]],
+    spacing_mm: float,
+) -> list[list[list[tuple[float, float]]]]:
+    if len(rows) <= 1:
+        return [rows] if rows else []
+    gap_limit = max(spacing_mm * 2.25, 0.75)
+    parents = list(range(len(rows)))
+    bounds_list = [row_bounds(row) for row in rows]
+    order = sorted(range(len(rows)), key=lambda index: bounds_list[index][0])
+
+    def find(index: int) -> int:
+        while parents[index] != index:
+            parents[index] = parents[parents[index]]
+            index = parents[index]
+        return index
+
+    def union(left: int, right: int) -> None:
+        left_root = find(left)
+        right_root = find(right)
+        if left_root != right_root:
+            parents[right_root] = left_root
+
+    for pos, left_index in enumerate(order):
+        left_bounds = bounds_list[left_index]
+        for right_index in order[pos + 1 :]:
+            right_bounds = bounds_list[right_index]
+            if right_bounds[0] > left_bounds[2] + gap_limit:
+                break
+            if row_bounds_gap(left_bounds, right_bounds) <= gap_limit:
+                union(left_index, right_index)
+
+    grouped: dict[int, list[list[tuple[float, float]]]] = {}
+    first_seen: dict[int, int] = {}
+    for index, row in enumerate(rows):
+        root = find(index)
+        grouped.setdefault(root, []).append(row)
+        first_seen.setdefault(root, index)
+    return [grouped[root] for root in sorted(grouped, key=lambda root: first_seen[root])]
+
+
 def hatch_fill(
     polygon: list[tuple[float, float]],
     spacing_mm: float,
@@ -385,7 +441,10 @@ def hatch_compound_fill(
             row_index += 1
         y += max(spacing_mm, 0.1)
 
-    rows = connect_adjacent_fill_rows(rows, closed_polygons, max_stitch_mm)
+    clustered_rows: list[list[tuple[float, float]]] = []
+    for cluster in cluster_hatch_rows(rows, spacing_mm):
+        clustered_rows.extend(connect_adjacent_fill_rows(cluster, closed_polygons, max_stitch_mm))
+    rows = clustered_rows
     if abs(angle_rad) > 1e-6:
         rows = [[rotate_point(point, angle_rad, origin) for point in row] for row in rows]
 
@@ -460,7 +519,7 @@ def optimized_hatch_compound_fill(
     if not polygon_list:
         return []
     best_rows: list[list[tuple[float, float]]] | None = None
-    best_score: tuple[int, int, float, float, int, float] | None = None
+    best_score: tuple[int, float, float, int, float, int] | None = None
     for angle in fill_angle_candidates(fill_angle_deg):
         rows = hatch_compound_fill(
             polygon_list,
@@ -472,11 +531,11 @@ def optimized_hatch_compound_fill(
         short_count, deficit, stitch_count, travel_total = stitch_micro_score(rows, min_stitch_mm)
         score = (
             short_count,
+            round(deficit, 4),
+            abs(angle - fill_angle_deg),
             len(rows),
             round(travel_total, 3),
-            round(deficit, 4),
             stitch_count,
-            abs(angle - fill_angle_deg),
         )
         if best_score is None or score < best_score:
             best_rows = rows
@@ -535,10 +594,10 @@ def mixed_hatch_compound_fill(
     plans.append(("crosshatch", crosshatch_rows))
 
     best_rows: list[list[tuple[float, float]]] | None = None
-    best_score: tuple[int, int, float, float, int, int] | None = None
+    best_score: tuple[int, float, int, int, float, int] | None = None
     for plan_index, (_, rows) in enumerate(plans):
         short_count, deficit, stitch_count, travel_total = stitch_micro_score(rows, min_stitch_mm)
-        score = (short_count, len(rows), round(travel_total, 3), round(deficit, 4), stitch_count, plan_index)
+        score = (short_count, round(deficit, 4), plan_index, len(rows), round(travel_total, 3), stitch_count)
         if best_score is None or score < best_score:
             best_score = score
             best_rows = rows

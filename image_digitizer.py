@@ -21,6 +21,168 @@ PDF_SUFFIXES = {".pdf"}
 RASTER_SUFFIXES = IMAGE_SUFFIXES | PDF_SUFFIXES
 
 
+def planned_run_bounds(run: tuple[list[tuple[float, float]], int]) -> tuple[float, float, float, float]:
+    points, _ = run
+    xs = [x for x, _ in points]
+    ys = [y for _, y in points]
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+def planned_bounds_gap(
+    first: tuple[float, float, float, float],
+    second: tuple[float, float, float, float],
+) -> float:
+    dx = max(first[0] - second[2], second[0] - first[2], 0.0)
+    dy = max(first[1] - second[3], second[1] - first[3], 0.0)
+    return math.hypot(dx, dy)
+
+
+def connected_planned_run_groups(
+    runs: list[tuple[list[tuple[float, float]], int]],
+    gap_mm: float = 1.5,
+) -> list[list[tuple[list[tuple[float, float]], int]]]:
+    if len(runs) <= 1:
+        return [runs] if runs else []
+    parents = list(range(len(runs)))
+    bounds_list = [planned_run_bounds(run) for run in runs]
+    order = sorted(range(len(runs)), key=lambda index: bounds_list[index][0])
+
+    def find(index: int) -> int:
+        while parents[index] != index:
+            parents[index] = parents[parents[index]]
+            index = parents[index]
+        return index
+
+    def union(left: int, right: int) -> None:
+        left_root = find(left)
+        right_root = find(right)
+        if left_root != right_root:
+            parents[right_root] = left_root
+
+    for pos, left_index in enumerate(order):
+        left_bounds = bounds_list[left_index]
+        for right_index in order[pos + 1 :]:
+            right_bounds = bounds_list[right_index]
+            if right_bounds[0] > left_bounds[2] + gap_mm:
+                break
+            if planned_bounds_gap(left_bounds, right_bounds) <= gap_mm:
+                union(left_index, right_index)
+
+    grouped: dict[int, list[tuple[list[tuple[float, float]], int]]] = {}
+    first_seen: dict[int, int] = {}
+    for index, run in enumerate(runs):
+        root = find(index)
+        grouped.setdefault(root, []).append(run)
+        first_seen.setdefault(root, index)
+    return [grouped[root] for root in sorted(grouped, key=lambda root: first_seen[root])]
+
+
+def boundary_pixels(
+    active: set[tuple[int, int]],
+    width: int,
+    height: int,
+) -> set[tuple[int, int]]:
+    return {
+        (col, row)
+        for col, row in active
+        if (
+            col == 0
+            or row == 0
+            or col == width - 1
+            or row == height - 1
+            or (col - 1, row) not in active
+            or (col + 1, row) not in active
+            or (col, row - 1) not in active
+            or (col, row + 1) not in active
+        )
+    }
+
+
+def boundary_loops_from_active(active: set[tuple[int, int]]) -> list[list[tuple[int, int]]]:
+    edges: set[tuple[tuple[int, int], tuple[int, int]]] = set()
+    adjacency: dict[tuple[int, int], set[tuple[int, int]]] = {}
+
+    def add_edge(a: tuple[int, int], b: tuple[int, int]) -> None:
+        edge = (a, b) if a <= b else (b, a)
+        if edge in edges:
+            return
+        edges.add(edge)
+        adjacency.setdefault(a, set()).add(b)
+        adjacency.setdefault(b, set()).add(a)
+
+    for col, row in active:
+        if (col - 1, row) not in active:
+            add_edge((col, row), (col, row + 1))
+        if (col + 1, row) not in active:
+            add_edge((col + 1, row), (col + 1, row + 1))
+        if (col, row - 1) not in active:
+            add_edge((col, row), (col + 1, row))
+        if (col, row + 1) not in active:
+            add_edge((col, row + 1), (col + 1, row + 1))
+
+    def remove_edge(a: tuple[int, int], b: tuple[int, int]) -> None:
+        edge = (a, b) if a <= b else (b, a)
+        edges.discard(edge)
+        if a in adjacency:
+            adjacency[a].discard(b)
+        if b in adjacency:
+            adjacency[b].discard(a)
+
+    loops: list[list[tuple[int, int]]] = []
+    while edges:
+        start, current = min(edges, key=lambda edge: (edge[0][1], edge[0][0], edge[1][1], edge[1][0]))
+        remove_edge(start, current)
+        loop = [start, current]
+        previous = start
+        while current != start:
+            candidates = list(adjacency.get(current, ()))
+            if not candidates:
+                break
+            # Prefer continuing through the current boundary rather than doubling
+            # back. At 4-way pixel-corner contacts, the deterministic angle order
+            # keeps separate contours from being stitched as one long zigzag.
+            in_dx = current[0] - previous[0]
+            in_dy = current[1] - previous[1]
+
+            def turn_score(candidate: tuple[int, int]) -> tuple[int, int, int]:
+                out_dx = candidate[0] - current[0]
+                out_dy = candidate[1] - current[1]
+                backtrack = 1 if candidate == previous and len(candidates) > 1 else 0
+                cross = in_dx * out_dy - in_dy * out_dx
+                dot = in_dx * out_dx + in_dy * out_dy
+                return backtrack, 0 if cross <= 0 else 1, -dot
+
+            next_point = min(candidates, key=turn_score)
+            remove_edge(current, next_point)
+            previous, current = current, next_point
+            loop.append(current)
+            if len(loop) > 200000:
+                break
+        if len(loop) >= 3:
+            loops.append(loop)
+    loops.sort(key=len, reverse=True)
+    return loops
+
+
+def simplify_grid_path(points: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    if len(points) <= 2:
+        return points
+    closed = points[0] == points[-1]
+    source = points[:-1] if closed else points
+    simplified: list[tuple[int, int]] = []
+    for point in source:
+        simplified.append(point)
+        while len(simplified) >= 3:
+            a, b, c = simplified[-3], simplified[-2], simplified[-1]
+            if (b[0] - a[0]) * (c[1] - b[1]) == (b[1] - a[1]) * (c[0] - b[0]):
+                simplified.pop(-2)
+            else:
+                break
+    if closed and simplified:
+        simplified.append(simplified[0])
+    return simplified
+
+
 def route_planned_runs(
     runs: list[tuple[list[tuple[float, float]], int]],
     start: tuple[float, float] | None = None,
@@ -44,30 +206,46 @@ def route_planned_runs(
 
     routed: list[tuple[list[tuple[float, float]], int]] = []
     current = start
-    remaining = ordered
-    while remaining:
+    remaining_groups = connected_planned_run_groups(ordered)
+    while remaining_groups:
         if current is None:
-            points, row_index = remaining.pop(0)
+            group = remaining_groups.pop(0)
         else:
-            best_index = 0
-            best_reversed = False
-            best_distance = float("inf")
-            for index, (candidate, _) in enumerate(remaining):
-                forward = math.hypot(current[0] - candidate[0][0], current[1] - candidate[0][1])
-                reverse = math.hypot(current[0] - candidate[-1][0], current[1] - candidate[-1][1])
-                if forward < best_distance:
-                    best_index = index
-                    best_reversed = False
-                    best_distance = forward
-                if reverse < best_distance:
-                    best_index = index
-                    best_reversed = True
-                    best_distance = reverse
-            points, row_index = remaining.pop(best_index)
-            if best_reversed:
-                points.reverse()
-        routed.append((points, row_index))
-        current = points[-1]
+            best_group_index = min(
+                range(len(remaining_groups)),
+                key=lambda index: min(
+                    min(
+                        math.hypot(current[0] - points[0][0], current[1] - points[0][1]),
+                        math.hypot(current[0] - points[-1][0], current[1] - points[-1][1]),
+                    )
+                    for points, _ in remaining_groups[index]
+                ),
+            )
+            group = remaining_groups.pop(best_group_index)
+        remaining = group
+        while remaining:
+            if current is None:
+                points, row_index = remaining.pop(0)
+            else:
+                best_index = 0
+                best_reversed = False
+                best_distance = float("inf")
+                for index, (candidate, _) in enumerate(remaining):
+                    forward = math.hypot(current[0] - candidate[0][0], current[1] - candidate[0][1])
+                    reverse = math.hypot(current[0] - candidate[-1][0], current[1] - candidate[-1][1])
+                    if forward < best_distance:
+                        best_index = index
+                        best_reversed = False
+                        best_distance = forward
+                    if reverse < best_distance:
+                        best_index = index
+                        best_reversed = True
+                        best_distance = reverse
+                points, row_index = remaining.pop(best_index)
+                if best_reversed:
+                    points.reverse()
+            routed.append((points, row_index))
+            current = points[-1]
     return routed
 
 
@@ -412,7 +590,7 @@ def image_to_segments(
                 candidates.append(angle)
         return candidates
 
-    def score_raster_angle(palette_index: int, stitch_angle: float) -> tuple[int, int, int, float]:
+    def score_raster_angle(palette_index: int, stitch_angle: float) -> tuple[int, float, int, int]:
         working_image = palette_image
         if abs(stitch_angle) > 0.001:
             working_image = palette_image.rotate(
@@ -447,7 +625,7 @@ def image_to_segments(
                     stitch_estimate += max(1, int(math.ceil((span / px_per_mm) / max(max_stitch_mm, 0.1))))
                     if span < min_run_px * 1.5:
                         short_remainders += 1
-        return short_remainders, run_count, stitch_estimate, abs(stitch_angle - fill_angle_deg)
+        return short_remainders, abs(stitch_angle - fill_angle_deg), run_count, stitch_estimate
 
     def best_raster_angle(palette_index: int) -> float:
         candidates = raster_fill_angle_candidates(fill_angle_deg)
@@ -664,62 +842,46 @@ def image_to_segments(
             }
             layer_index = 0
             while active:
-                boundary_points: list[tuple[int, int]] = []
-                for col, row in active:
-                    if (
-                        col == 0
-                        or row == 0
-                        or col == palette_image.width - 1
-                        or row == palette_image.height - 1
-                        or (col - 1, row) not in active
-                        or (col + 1, row) not in active
-                        or (col, row - 1) not in active
-                        or (col, row + 1) not in active
-                    ):
-                        boundary_points.append((col, row))
-                if not boundary_points:
+                boundary = boundary_pixels(active, palette_image.width, palette_image.height)
+                if not boundary:
                     break
-                boundary_points.sort(key=lambda point: (point[1], point[0]))
-                run: list[tuple[int, int]] = []
-                last: tuple[int, int] | None = None
-                outline_runs: list[list[tuple[int, int]]] = []
-                for point in boundary_points:
-                    if last is None or point[1] != last[1] or point[0] > last[0] + 1:
-                        if len(run) >= 2:
-                            outline_runs.append(run)
-                        run = [point]
-                    else:
-                        run.append(point)
-                    last = point
-                if len(run) >= 2:
-                    outline_runs.append(run)
-                for row_index, run in enumerate(outline_runs):
-                    if (row_index + layer_index) % 2:
-                        run = list(reversed(run))
-                    x1 = origin_x + run[0][0] / px_per_mm
-                    y1 = origin_y + run[0][1] / px_per_mm
-                    x2 = origin_x + run[-1][0] / px_per_mm
-                    y2 = origin_y + run[-1][1] / px_per_mm
-                    append_run(block, x1, y1, x2, y2, row_index + layer_index)
+                loops = boundary_loops_from_active(active)
+                if previous_point is not None and loops:
+                    loops.sort(
+                        key=lambda loop: min(
+                            math.hypot(
+                                previous_point[0] - (origin_x + point[0] / px_per_mm),
+                                previous_point[1] - (origin_y + point[1] / px_per_mm),
+                            )
+                            for point in (loop[0], loop[-1])
+                        )
+                    )
+                for loop_index, loop in enumerate(loops):
+                    loop = simplify_grid_path(loop)
+                    if len(loop) < 2:
+                        continue
+                    if previous_point is not None:
+                        first = (origin_x + loop[0][0] / px_per_mm, origin_y + loop[0][1] / px_per_mm)
+                        last = (origin_x + loop[-1][0] / px_per_mm, origin_y + loop[-1][1] / px_per_mm)
+                        if math.hypot(previous_point[0] - last[0], previous_point[1] - last[1]) < math.hypot(
+                            previous_point[0] - first[0],
+                            previous_point[1] - first[1],
+                        ):
+                            loop = list(reversed(loop))
+                    for point_index in range(len(loop) - 1):
+                        start = loop[point_index]
+                        end = loop[point_index + 1]
+                        x1 = origin_x + start[0] / px_per_mm
+                        y1 = origin_y + start[1] / px_per_mm
+                        x2 = origin_x + end[0] / px_per_mm
+                        y2 = origin_y + end[1] / px_per_mm
+                        append_run(block, x1, y1, x2, y2, layer_index + loop_index + point_index)
                 if fill_mode == "outline":
                     break
                 for _ in range(max(1, row_step_px)):
                     if not active:
                         break
-                    erode = set()
-                    for col, row in active:
-                        if (
-                            col == 0
-                            or row == 0
-                            or col == palette_image.width - 1
-                            or row == palette_image.height - 1
-                            or (col - 1, row) not in active
-                            or (col + 1, row) not in active
-                            or (col, row - 1) not in active
-                            or (col, row + 1) not in active
-                        ):
-                            erode.add((col, row))
-                    active.difference_update(erode)
+                    active.difference_update(boundary_pixels(active, palette_image.width, palette_image.height))
                 layer_index += 1
             continue
 
