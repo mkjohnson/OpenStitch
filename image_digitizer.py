@@ -183,18 +183,6 @@ def simplify_grid_path(points: list[tuple[int, int]]) -> list[tuple[int, int]]:
     return simplified
 
 
-def rotate_closed_path_to_index(points: list[tuple[int, int]], index: int) -> list[tuple[int, int]]:
-    if len(points) < 3:
-        return points
-    source = points[:-1] if points[0] == points[-1] else points
-    if not source:
-        return points
-    index %= len(source)
-    rotated = [*source[index:], *source[:index]]
-    rotated.append(rotated[0])
-    return rotated
-
-
 def connected_pixel_components(active: set[tuple[int, int]]) -> list[set[tuple[int, int]]]:
     remaining = set(active)
     components: list[set[tuple[int, int]]] = []
@@ -227,14 +215,6 @@ def component_centroid(component: set[tuple[int, int]]) -> tuple[float, float]:
     total_x = sum(col for col, _ in component)
     total_y = sum(row for _, row in component)
     return total_x / len(component), total_y / len(component)
-
-
-def ranges_touch(
-    first: tuple[int, int],
-    second: tuple[int, int],
-    gap_px: int,
-) -> bool:
-    return first[0] <= second[1] + gap_px and second[0] <= first[1] + gap_px
 
 
 def route_planned_runs(
@@ -468,93 +448,6 @@ def merge_similar_palette_colors(
     return palette_image.point(lookup), [group["color"] for group in groups]
 
 
-def antialias_blend_error(
-    color: tuple[int, int, int],
-    anchor: tuple[int, int, int],
-    background: tuple[int, int, int] = (255, 255, 255),
-) -> tuple[float, float]:
-    alphas: list[float] = []
-    for channel in range(3):
-        span = background[channel] - anchor[channel]
-        if abs(span) < 10:
-            continue
-        alpha = (background[channel] - color[channel]) / span
-        alphas.append(max(0.0, min(1.0, alpha)))
-    if not alphas:
-        return float("inf"), 0.0
-    alpha = sum(alphas) / len(alphas)
-    blended = tuple(
-        int(round(background[channel] * (1.0 - alpha) + anchor[channel] * alpha))
-        for channel in range(3)
-    )
-    return color_distance(color, blended), alpha
-
-
-def collapse_antialias_palette_colors(
-    palette_image: Image.Image,
-    colors: list[tuple[int, int, int]],
-    background_threshold: int,
-) -> tuple[Image.Image, list[tuple[int, int, int]]]:
-    counts = palette_image.histogram()
-    used_indices = [
-        index
-        for index, color in enumerate(colors)
-        if index < len(counts) and counts[index] > 0
-    ]
-    foreground_indices = [
-        index
-        for index in used_indices
-        if not is_background_color(colors[index], background_threshold)
-    ]
-    if len(foreground_indices) < 2:
-        return palette_image, colors
-
-    anchor_indices: list[int] = []
-    for index in foreground_indices:
-        color = colors[index]
-        _, lightness, saturation = colorsys.rgb_to_hls(color[0] / 255, color[1] / 255, color[2] / 255)
-        if max(color) < 80 or saturation > 0.22 or counts[index] >= max(counts[candidate] for candidate in foreground_indices) * 0.18:
-            anchor_indices.append(index)
-    if len(anchor_indices) < 2:
-        return palette_image, colors
-
-    old_to_anchor = {index: index for index in used_indices}
-    for index in foreground_indices:
-        color = colors[index]
-        best: tuple[float, int, float] | None = None
-        for anchor_index in anchor_indices:
-            if anchor_index == index:
-                continue
-            anchor = colors[anchor_index]
-            error, alpha = antialias_blend_error(color, anchor)
-            if not (0.18 <= alpha <= 0.96):
-                continue
-            if error > 34:
-                continue
-            option = (error, anchor_index, alpha)
-            if best is None or option < best:
-                best = option
-        if best is not None:
-            old_to_anchor[index] = best[1]
-
-    groups: list[dict] = []
-    anchor_to_new: dict[int, int] = {}
-    old_to_new: dict[int, int] = {}
-    for index in used_indices:
-        anchor_index = old_to_anchor.get(index, index)
-        if anchor_index not in anchor_to_new:
-            anchor_to_new[anchor_index] = len(groups)
-            groups.append({"color": colors[anchor_index], "count": 0})
-        new_index = anchor_to_new[anchor_index]
-        groups[new_index]["count"] += counts[index]
-        old_to_new[index] = new_index
-
-    if len(groups) == len(used_indices):
-        return palette_image, colors
-    lookup = [old_to_new.get(index, 0) for index in range(256)]
-    return palette_image.point(lookup), [group["color"] for group in groups]
-
-
 def snap_palette_to_inventory_threads(
     palette_image: Image.Image,
     colors: list[tuple[int, int, int]],
@@ -662,7 +555,6 @@ def quantized_pixels(
     indexed = Image.new("L", rgb.size)
     indexed.putdata([nearest_index(pixel) for pixel in source_pixels])
     indexed, merged_colors = merge_similar_palette_colors(indexed, [*colors, (255, 255, 255)], color_merge_distance)
-    indexed, merged_colors = collapse_antialias_palette_colors(indexed, merged_colors, background_threshold)
     return snap_palette_to_inventory_threads(
         indexed,
         merged_colors,
@@ -820,25 +712,14 @@ def image_to_segments(
         x2: float,
         y2: float,
         row_index: int,
-        *,
-        force_stitch_travel: bool = False,
     ) -> None:
         nonlocal previous_point, pending_travel
         connected_to_start = False
         if previous_point is not None and math.hypot(previous_point[0] - x1, previous_point[1] - y1) > 0.001:
             travel_distance = math.hypot(previous_point[0] - x1, previous_point[1] - y1)
-            effective_trim_after_mm = trim_after_mm
-            if path_planning == "min_cuts" and pending_travel != "travel_after_color_change":
-                effective_trim_after_mm = max(trim_after_mm, max_stitch_mm * 7.0)
-            should_trim = (not force_stitch_travel) and (
-                pending_travel == "travel_after_color_change" or travel_distance >= effective_trim_after_mm
-            )
+            should_trim = pending_travel == "travel_after_color_change" or travel_distance >= trim_after_mm
             connector_limit_mm = min(max_stitch_mm, max(fill_spacing_mm * 4.0, 0.9))
-            can_stitch_travel = (
-                path_planning == "min_cuts"
-                and not pending_travel
-                and (force_stitch_travel or (not should_trim and travel_distance <= connector_limit_mm))
-            )
+            can_stitch_travel = path_planning == "min_cuts" and not should_trim and travel_distance <= connector_limit_mm
             if pending_travel:
                 commands.append(
                     {
@@ -862,31 +743,23 @@ def image_to_segments(
                 )
                 pending_travel = pending_travel or "travel_after_trim"
             if can_stitch_travel:
-                max_connector_len = max(max_stitch_mm, 0.1)
-                segment_count = max(1, int(math.ceil(travel_distance / max_connector_len)))
-                last_x, last_y = previous_point
-                for index in range(1, segment_count + 1):
-                    ratio = index / segment_count
-                    x = previous_point[0] + (x1 - previous_point[0]) * ratio
-                    y = previous_point[1] + (y1 - previous_point[1]) * ratio
-                    counts["needle_points"] += 1
-                    counts["stitch_segments"] += 1
-                    block["stitches"] += 1
-                    segments.append(
-                        {
-                            "x1": last_x,
-                            "y1": last_y,
-                            "x2": x,
-                            "y2": y,
-                            "kind": "stitch",
-                            "color": block["color"],
-                            "colorIndex": block["thread"],
-                            "blockIndex": block["index"],
-                            "step": counts["needle_points"],
-                        }
-                    )
-                    commands.append({"x": x, "y": y, "command": "stitch", "color": block["thread"], "step": counts["needle_points"]})
-                    last_x, last_y = x, y
+                counts["needle_points"] += 1
+                counts["stitch_segments"] += 1
+                block["stitches"] += 1
+                segments.append(
+                    {
+                        "x1": previous_point[0],
+                        "y1": previous_point[1],
+                        "x2": x1,
+                        "y2": y1,
+                        "kind": "stitch",
+                        "color": block["color"],
+                        "colorIndex": block["thread"],
+                        "blockIndex": block["index"],
+                        "step": counts["needle_points"],
+                    }
+                )
+                commands.append({"x": x1, "y": y1, "command": "stitch", "color": block["thread"], "step": counts["needle_points"]})
                 connected_to_start = True
             else:
                 commands.append({"x": x1, "y": y1, "command": "jump", "color": block["thread"], "step": counts["needle_points"]})
@@ -1030,11 +903,9 @@ def image_to_segments(
         rows_by_y: dict[int, list[int]] = {}
         for col, row in component:
             rows_by_y.setdefault(row, []).append(col)
-        bands: list[dict] = []
-        active_bands: list[dict] = []
+        planned_runs: list[tuple[list[tuple[float, float]], int]] = []
         min_row = min(rows_by_y)
         selected_row_index = 0
-        overlap_gap_px = max(1, int(round(row_step_px * 1.5)))
         for row in sorted(rows_by_y):
             if (row - min_row) % row_step_px:
                 continue
@@ -1048,64 +919,19 @@ def image_to_segments(
                     start = col
                 previous = col
             add_preserved_range(ranges, start, previous, palette_image.width)
-            next_active_bands: list[dict] = []
+            if selected_row_index % 2:
+                ranges.reverse()
             for left, right in ranges:
-                matching_band = None
-                if active_bands:
-                    matches = [
-                        band
-                        for band in active_bands
-                        if ranges_touch((left, right), band["last_range"], overlap_gap_px)
-                    ]
-                    if matches:
-                        matching_band = min(
-                            matches,
-                            key=lambda band: abs(((left + right) / 2) - ((band["last_range"][0] + band["last_range"][1]) / 2)),
-                        )
-                if matching_band is None:
-                    matching_band = {"runs": [], "last_range": (left, right), "first_row_index": selected_row_index}
-                    bands.append(matching_band)
-                matching_band["last_range"] = (left, right)
                 x1 = origin_x + left / px_per_mm
                 y1 = origin_y + row / px_per_mm
                 x2 = origin_x + right / px_per_mm
                 y2 = y1
-                band_row_index = len(matching_band["runs"])
-                if band_row_index % 2:
+                if selected_row_index % 2:
                     x1, x2 = x2, x1
-                matching_band["runs"].append(([(x1, y1), (x2, y2)], selected_row_index))
-                if matching_band not in next_active_bands:
-                    next_active_bands.append(matching_band)
-            active_bands = next_active_bands
+                planned_runs.append(([(x1, y1), (x2, y2)], selected_row_index))
             selected_row_index += 1
-        remaining_bands = [band for band in bands if band["runs"]]
-        wrote_component_stitch = False
-        while remaining_bands:
-            if previous_point is None:
-                band_index = 0
-            else:
-                band_index = min(
-                    range(len(remaining_bands)),
-                    key=lambda index: min(
-                        min(
-                            math.hypot(previous_point[0] - points[0][0], previous_point[1] - points[0][1]),
-                            math.hypot(previous_point[0] - points[-1][0], previous_point[1] - points[-1][1]),
-                        )
-                        for points, _ in remaining_bands[index]["runs"]
-                    ),
-                )
-            band = remaining_bands.pop(band_index)
-            for points, row_index in route_planned_runs(band["runs"], start=previous_point, mode="clean_top"):
-                append_run(
-                    block,
-                    points[0][0],
-                    points[0][1],
-                    points[-1][0],
-                    points[-1][1],
-                    row_index,
-                    force_stitch_travel=wrote_component_stitch,
-                )
-                wrote_component_stitch = True
+        for points, row_index in route_planned_runs(planned_runs, start=previous_point, mode="clean_top"):
+            append_run(block, points[0][0], points[0][1], points[-1][0], points[-1][1], row_index)
 
     def stitch_boundary_passes(block: dict, active_pixels: set[tuple[int, int]], pass_count: int) -> None:
         nonlocal previous_point
@@ -1126,36 +952,17 @@ def image_to_segments(
                 else:
                     best: tuple[float, int, bool] | None = None
                     for candidate_index, loop in enumerate(remaining_loops):
-                        source_loop = loop[:-1] if loop and loop[0] == loop[-1] else loop
-                        nearest_distance = min(
-                            (
-                                math.hypot(
-                                    previous_point[0] - (origin_x + point[0] / px_per_mm),
-                                    previous_point[1] - (origin_y + point[1] / px_per_mm),
-                                )
-                                for point in source_loop
-                            ),
-                            default=float("inf"),
-                        )
-                        option = (nearest_distance, candidate_index, False)
+                        first = (origin_x + loop[0][0] / px_per_mm, origin_y + loop[0][1] / px_per_mm)
+                        last = (origin_x + loop[-1][0] / px_per_mm, origin_y + loop[-1][1] / px_per_mm)
+                        forward = math.hypot(previous_point[0] - first[0], previous_point[1] - first[1])
+                        reverse = math.hypot(previous_point[0] - last[0], previous_point[1] - last[1])
+                        option = (min(forward, reverse), candidate_index, reverse < forward)
                         if best is None or option < best:
                             best = option
                     _, loop_index, reverse_loop = best or (0.0, 0, False)
                 loop = remaining_loops.pop(loop_index)
-                if previous_point is not None and len(loop) > 2:
-                    source_loop = loop[:-1] if loop[0] == loop[-1] else loop
-                    nearest_point_index = min(
-                        range(len(source_loop)),
-                        key=lambda index: math.hypot(
-                            previous_point[0] - (origin_x + source_loop[index][0] / px_per_mm),
-                            previous_point[1] - (origin_y + source_loop[index][1] / px_per_mm),
-                        ),
-                    )
-                    loop = rotate_closed_path_to_index(loop, nearest_point_index)
                 if reverse_loop:
                     loop = list(reversed(loop))
-                    if loop and loop[0] != loop[-1]:
-                        loop.append(loop[0])
                 for point_index in range(len(loop) - 1):
                     start = loop[point_index]
                     end = loop[point_index + 1]
