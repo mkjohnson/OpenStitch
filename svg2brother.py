@@ -276,11 +276,17 @@ def connect_adjacent_fill_rows(
     rows: list[list[tuple[float, float]]],
     polygons: list[list[tuple[float, float]]],
     max_stitch_mm: float,
+    spacing_mm: float,
 ) -> list[list[tuple[float, float]]]:
     connected: list[list[tuple[float, float]]] = []
     current: list[tuple[float, float]] | None = None
+    connector_limit = max(spacing_mm * 3.0, 0.8)
     for row in rows:
         if current is None:
+            current = list(row)
+            continue
+        if distance(current[-1], row[0]) > connector_limit:
+            connected.append(current)
             current = list(row)
             continue
         connector = split_long_stitches([current[-1], row[0]], max_stitch_mm)
@@ -423,7 +429,7 @@ def hatch_compound_fill(
 
     clustered_rows: list[list[tuple[float, float]]] = []
     for cluster in cluster_hatch_rows(rows, spacing_mm):
-        clustered_rows.extend(connect_adjacent_fill_rows(cluster, closed_polygons, max_stitch_mm))
+        clustered_rows.extend(connect_adjacent_fill_rows(cluster, closed_polygons, max_stitch_mm, spacing_mm))
     rows = clustered_rows
     if abs(angle_rad) > 1e-6:
         rows = [[rotate_point(point, angle_rad, origin) for point in row] for row in rows]

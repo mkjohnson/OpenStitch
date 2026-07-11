@@ -738,7 +738,7 @@ def image_to_segments(
                 path_planning == "min_cuts"
                 and not should_trim
                 and not pending_travel
-                and (force_stitch_travel or travel_distance <= connector_limit_mm)
+                and travel_distance <= connector_limit_mm
             )
             if pending_travel:
                 commands.append(
