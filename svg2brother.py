@@ -126,24 +126,6 @@ def route_point_runs(
     return routed
 
 
-def connector_points(
-    start: tuple[float, float],
-    end: tuple[float, float],
-    max_stitch_mm: float,
-) -> list[tuple[float, float]]:
-    span = distance(start, end)
-    if span <= 0.001:
-        return []
-    steps = max(1, int(math.ceil(span / max(max_stitch_mm, 0.1))))
-    return [
-        (
-            start[0] + (end[0] - start[0]) * (index / steps),
-            start[1] + (end[1] - start[1]) * (index / steps),
-        )
-        for index in range(1, steps + 1)
-    ]
-
-
 def route_stitch_runs(
     runs: Iterable[StitchRun],
     mode: str = "min_cuts",
@@ -164,20 +146,9 @@ def route_stitch_runs(
     routed: list[StitchRun] = []
     current: tuple[float, float] | None = None
     for color in color_order:
-        merged_points: list[tuple[float, float]] | None = None
         for points in route_point_runs(grouped[color], start=current, mode=mode):
-            if mode == "fast":
-                routed.append(StitchRun(color=color, points_mm=points))
-                current = points[-1]
-                continue
-            if merged_points is None:
-                merged_points = list(points)
-            else:
-                merged_points.extend(connector_points(merged_points[-1], points[0], max_stitch_mm))
-                merged_points.extend(points[1:])
+            routed.append(StitchRun(color=color, points_mm=points))
             current = points[-1]
-        if merged_points:
-            routed.append(StitchRun(color=color, points_mm=merged_points))
     return routed
 
 
