@@ -143,7 +143,7 @@ def project_settings(
         "fill_angle_deg": fill_angle_deg,
         "max_colors": max_colors,
         "color_merge_distance": color_merge_distance,
-        "collapse_edge_shades": bool(collapse_edge_shades),
+        "collapse_edge_shades": True,
         "pdf_page": pdf_page,
         "display_units": display_units,
         "fabric_color": fabric_color,
@@ -276,7 +276,7 @@ def coerce_project_settings(settings: dict) -> dict:
     fill_angle_deg = float(settings.get("fill_angle_deg", 45.0))
     max_colors = int(settings.get("max_colors", 6))
     color_merge_distance = float(settings.get("color_merge_distance", 56.0))
-    collapse_edge_shades = bool(settings.get("collapse_edge_shades", True))
+    collapse_edge_shades = True
     pdf_page = int(settings.get("pdf_page", 1))
     display_units = str(settings.get("display_units") or "metric")
     fabric_color = str(settings.get("fabric_color") or "#fbfcfa")
@@ -296,7 +296,7 @@ def coerce_project_settings(settings: dict) -> dict:
         fill_angle_deg=fill_angle_deg,
         max_colors=max_colors,
         color_merge_distance=color_merge_distance,
-        collapse_edge_shades=collapse_edge_shades,
+        collapse_edge_shades=True,
         pdf_page=pdf_page,
         display_units=display_units,
         fabric_color=fabric_color,
@@ -485,7 +485,7 @@ class ViewerHandler(SimpleHTTPRequestHandler):
         fill_angle_deg = settings["fill_angle_deg"]
         max_colors = settings["max_colors"]
         color_merge_distance = settings["color_merge_distance"]
-        collapse_edge_shades = bool(settings.get("collapse_edge_shades", True))
+        collapse_edge_shades = True
         pdf_page = settings["pdf_page"]
         display_units = settings.get("display_units", "metric")
         fabric_color = settings.get("fabric_color", "#fbfcfa")
