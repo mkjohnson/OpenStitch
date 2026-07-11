@@ -3701,15 +3701,13 @@ def write_segments_as_pes(
 
         if previous_point is None or to_embroidery_units(previous_point) != start_units:
             start_needs_tie_in = True
+            target_point = (start_units[0] / EMB_UNITS_PER_MM, start_units[1] / EMB_UNITS_PER_MM)
             if (
                 connect_short_gaps
                 and
                 previous_point is not None
                 and old_active_block == block_index
-                and point_distance(
-                    previous_point,
-                    (start_units[0] / EMB_UNITS_PER_MM, start_units[1] / EMB_UNITS_PER_MM),
-                ) <= max(max_connect_gap_mm, min_stitch_mm)
+                and point_distance(previous_point, target_point) <= max(max_connect_gap_mm, min_stitch_mm)
             ):
                 pattern.add_stitch_absolute(embroidery.STITCH, start_units[0], start_units[1])
                 current_units = start_units
@@ -3721,6 +3719,11 @@ def write_segments_as_pes(
                     pattern.add_stitch_absolute(embroidery.STITCH, start_units[0], start_units[1])
                 current_units = start_units
             else:
+                if (
+                    old_active_block == block_index
+                    and point_distance(previous_point, target_point) > max(max_connect_gap_mm, min_stitch_mm)
+                ):
+                    pattern.trim()
                 pattern.add_stitch_absolute(embroidery.JUMP, start_units[0], start_units[1])
                 pattern.add_stitch_absolute(embroidery.STITCH, start_units[0], start_units[1])
                 current_units = start_units

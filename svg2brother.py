@@ -476,26 +476,13 @@ def island_tatami_compound_fill(
     polygon_list = [polygon for polygon in polygons if len(polygon) >= 3]
     if not polygon_list:
         return []
-    underlay_spacing = max(spacing_mm * 3.0, 0.9)
-    underlay_max_stitch = min(max(max_stitch_mm, 3.0), 4.0)
-    underlay_angle = fill_angle_deg + 90.0 if abs(fill_angle_deg) > 0.001 else 90.0
-    rows = hatch_compound_fill(
+    return optimized_hatch_compound_fill(
         polygon_list,
-        underlay_spacing,
-        underlay_max_stitch,
-        underlay_angle,
+        spacing_mm,
+        max_stitch_mm,
+        fill_angle_deg,
         min_stitch_mm=min_stitch_mm,
     )
-    rows.extend(
-        optimized_hatch_compound_fill(
-            polygon_list,
-            spacing_mm,
-            max_stitch_mm,
-            fill_angle_deg,
-            min_stitch_mm=min_stitch_mm,
-        )
-    )
-    return rows
 
 
 def stitch_micro_score(
@@ -908,6 +895,8 @@ def make_thread(hex_color: str) -> EmbThread:
 def write_embroidery(runs: list[StitchRun], output: Path) -> None:
     pattern = EmbPattern()
     active_color: str | None = None
+    previous_point: tuple[float, float] | None = None
+    trim_gap_mm = 0.75
 
     for run in runs:
         if len(run.points_mm) < 2:
@@ -919,6 +908,8 @@ def write_embroidery(runs: list[StitchRun], output: Path) -> None:
             active_color = run.color
 
         first_x, first_y = run.points_mm[0]
+        if previous_point is not None and distance(previous_point, (first_x, first_y)) > trim_gap_mm:
+            pattern.trim()
         pattern.add_stitch_absolute(
             embroidery.JUMP,
             int(round(first_x * EMB_UNITS_PER_MM)),
@@ -930,6 +921,7 @@ def write_embroidery(runs: list[StitchRun], output: Path) -> None:
                 int(round(x * EMB_UNITS_PER_MM)),
                 int(round(y * EMB_UNITS_PER_MM)),
             )
+        previous_point = run.points_mm[-1]
 
     if pattern.count_stitches() == 0:
         raise ValueError("No stitches were generated.")
@@ -991,7 +983,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--fill-mode",
-        choices=("mixed", "contour", "tatami", "horizontal", "crosshatch", "outline"),
+        choices=("mixed", "island_tatami", "contour", "tatami", "horizontal", "crosshatch", "outline"),
         default="tatami",
         help="Fill style for filled SVG shapes; default: tatami",
     )
