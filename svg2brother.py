@@ -327,34 +327,20 @@ def connect_adjacent_fill_rows(
     return connected
 
 
-def split_rows_into_side_lanes(
+def add_edge_return_rows(
     rows: list[list[tuple[float, float]]],
-    spacing_mm: float,
     max_stitch_mm: float,
     min_stitch_mm: float,
 ) -> list[list[tuple[float, float]]]:
-    left_lane: list[list[tuple[float, float]]] = []
-    right_lane: list[list[tuple[float, float]]] = []
-    for row_index, row in enumerate(rows):
-        xs = [x for x, _ in row]
-        ys = [y for _, y in row]
-        left = min(xs)
-        right = max(xs)
-        y = sum(ys) / len(ys)
-        if right - left < max(min_stitch_mm * 2.5, spacing_mm * 3.0):
+    returned: list[list[tuple[float, float]]] = []
+    for row in rows:
+        if len(row) < 2:
             continue
-        middle = (left + right) / 2
-        left_run = split_long_stitches([(left, y), (middle, y)], max_stitch_mm, min_stitch_mm=min_stitch_mm)
-        right_run = split_long_stitches([(middle, y), (right, y)], max_stitch_mm, min_stitch_mm=min_stitch_mm)
-        if row_index % 2:
-            left_run.reverse()
-            right_run.reverse()
-        if len(left_run) >= 2:
-            left_lane.append(left_run)
-        if len(right_run) >= 2:
-            right_lane.append(right_run)
-    right_lane.reverse()
-    return left_lane + right_lane
+        forward = list(row)
+        reverse = list(reversed(row))
+        returned.append(forward)
+        returned.append(split_long_stitches(reverse, max_stitch_mm, min_stitch_mm=min_stitch_mm))
+    return returned
 
 
 def row_bounds(row: list[tuple[float, float]]) -> tuple[float, float, float, float]:
@@ -496,7 +482,7 @@ def hatch_compound_fill(
         height = max(ys) - min(ys) if ys else 0.0
         aspect = width / height if height > 0 else 0.0
         if width >= 5.0 and height >= 5.0 and 0.55 <= aspect <= 1.8:
-            rows = split_rows_into_side_lanes(rows, spacing_mm, max_stitch_mm, min_stitch_mm)
+            rows = add_edge_return_rows(rows, max_stitch_mm, min_stitch_mm)
             connector_limit_mm = max(spacing_mm * 8.0, 2.5)
 
     clustered_rows: list[list[tuple[float, float]]] = []
