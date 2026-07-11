@@ -585,7 +585,7 @@ def mixed_hatch_compound_fill(
         max_stitch_mm,
         0.0,
         min_stitch_mm=min_stitch_mm,
-        side_lanes=True,
+        side_lanes=False,
     )
 
 
