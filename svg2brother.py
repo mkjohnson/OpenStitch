@@ -662,6 +662,24 @@ def contour_compound_fill(
     return rows
 
 
+def outline_compound_fill(
+    polygons: Iterable[list[tuple[float, float]]],
+    max_stitch_mm: float,
+    min_stitch_mm: float = MIN_FILL_STITCH_MM,
+) -> list[list[tuple[float, float]]]:
+    rows: list[list[tuple[float, float]]] = []
+    for polygon in polygons:
+        if len(polygon) < 2:
+            continue
+        if len(polygon) >= 3 and distance(polygon[0], polygon[-1]) > 0.01:
+            polygon = [*polygon, polygon[0]]
+        outline = simplify_contour_points(polygon, min_stitch_mm=min_stitch_mm)
+        outline = split_long_stitches(outline, max_stitch_mm, min_stitch_mm=min_stitch_mm)
+        if len(outline) >= 2:
+            rows.append(outline)
+    return rows
+
+
 def extract_runs(
     svg_file: Path,
     sample_step_mm: float,
@@ -724,13 +742,22 @@ def extract_runs(
                         runs.append(StitchRun(color=color, points_mm=row))
         elif filled and fill_mode == "contour":
             fill_polygons = [subpath_mm for subpath_mm in subpaths_mm if len(subpath_mm) >= 3]
-            for row in contour_compound_fill(
-                fill_polygons,
-                fill_spacing_mm,
-                max_stitch_mm,
-                min_stitch_mm=min_stitch_mm,
-            ):
-                runs.append(StitchRun(color=color, points_mm=row))
+            for component in compound_fill_components(fill_polygons):
+                fill_rows = optimized_hatch_compound_fill(
+                    component,
+                    fill_spacing_mm,
+                    max_stitch_mm,
+                    fill_angle_deg,
+                    min_stitch_mm=min_stitch_mm,
+                )
+                for row in fill_rows:
+                    runs.append(StitchRun(color=color, points_mm=row))
+                for row in outline_compound_fill(
+                    component,
+                    max_stitch_mm,
+                    min_stitch_mm=min_stitch_mm,
+                ):
+                    runs.append(StitchRun(color=color, points_mm=row))
         else:
             for subpath_mm in subpaths_mm:
                 runs.append(
