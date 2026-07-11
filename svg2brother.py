@@ -566,24 +566,6 @@ def mixed_hatch_compound_fill(
             ),
         ),
     ]
-    crosshatch_rows = optimized_hatch_compound_fill(
-        polygon_list,
-        spacing_mm * 1.4,
-        max_stitch_mm,
-        fill_angle_deg,
-        min_stitch_mm=min_stitch_mm,
-    )
-    crosshatch_rows.extend(
-        optimized_hatch_compound_fill(
-            polygon_list,
-            spacing_mm * 1.4,
-            max_stitch_mm,
-            -fill_angle_deg if abs(fill_angle_deg) > 0.001 else 90.0,
-            min_stitch_mm=min_stitch_mm,
-        )
-    )
-    plans.append(("crosshatch", crosshatch_rows))
-
     best_rows: list[list[tuple[float, float]]] | None = None
     best_score: tuple[int, float, int, int, float, int] | None = None
     for plan_index, (_, rows) in enumerate(plans):
