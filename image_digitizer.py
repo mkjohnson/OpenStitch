@@ -716,9 +716,9 @@ def image_to_segments(
         nonlocal previous_point, pending_travel
         connected_to_start = False
         if previous_point is not None and math.hypot(previous_point[0] - x1, previous_point[1] - y1) > 0.001:
-            should_trim = pending_travel == "travel_after_color_change"
             travel_distance = math.hypot(previous_point[0] - x1, previous_point[1] - y1)
-            connector_limit_mm = min(max_stitch_mm, max(fill_spacing_mm * 2.5, 0.65), 1.2)
+            should_trim = pending_travel == "travel_after_color_change" or travel_distance >= trim_after_mm
+            connector_limit_mm = min(max_stitch_mm, max(fill_spacing_mm * 4.0, 0.9))
             can_stitch_travel = path_planning == "min_cuts" and not should_trim and travel_distance <= connector_limit_mm
             if pending_travel:
                 commands.append(
@@ -741,6 +741,7 @@ def image_to_segments(
                         "step": counts["needle_points"],
                     }
                 )
+                pending_travel = pending_travel or "travel_after_trim"
             if can_stitch_travel:
                 counts["needle_points"] += 1
                 counts["stitch_segments"] += 1
@@ -929,7 +930,7 @@ def image_to_segments(
                     x1, x2 = x2, x1
                 planned_runs.append(([(x1, y1), (x2, y2)], selected_row_index))
             selected_row_index += 1
-        for points, row_index in route_planned_runs(planned_runs, start=previous_point, mode=path_planning):
+        for points, row_index in route_planned_runs(planned_runs, start=previous_point, mode="clean_top"):
             append_run(block, points[0][0], points[0][1], points[-1][0], points[-1][1], row_index)
 
     def stitch_boundary_passes(block: dict, active_pixels: set[tuple[int, int]], pass_count: int) -> None:
@@ -1044,7 +1045,13 @@ def write_segments_as_pes(
 
     for segment in segments:
         block_index = segment["blockIndex"]
-        if block_index not in selected_blocks or segment["kind"] != "stitch":
+        if block_index not in selected_blocks:
+            continue
+        if segment["kind"] == "travel_after_trim":
+            pattern.trim()
+            previous_point = None
+            continue
+        if segment["kind"] != "stitch":
             continue
         if block_index != active_block:
             block = color_blocks[block_index]
