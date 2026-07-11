@@ -3738,7 +3738,6 @@ def write_segments_as_pes(
         previous_point = (current_units[0] / EMB_UNITS_PER_MM, current_units[1] / EMB_UNITS_PER_MM)
 
     def write_segment_sequence(sequence: list[dict]) -> None:
-        nonlocal previous_point
         current_block: int | None = None
         current_perimeter = False
         current_perimeter_loop: int | None = None
@@ -3753,12 +3752,6 @@ def write_segments_as_pes(
             run_points = []
 
         for segment in sequence:
-            if segment.get("kind") != "stitch":
-                flush()
-                if segment.get("kind") == "travel_after_trim" and active_block is not None:
-                    pattern.trim()
-                    previous_point = None
-                continue
             nonlocal_current_perimeter = bool(segment.get("perimeter"))
             nonlocal_perimeter_loop = segment.get("perimeterLoop") if nonlocal_current_perimeter else None
             block_index = segment["blockIndex"]
@@ -3785,8 +3778,7 @@ def write_segments_as_pes(
             [
                 segment
                 for segment in segments
-                if segment["blockIndex"] in selected_blocks
-                and segment["kind"] in {"stitch", "travel_after_trim"}
+                if segment["kind"] == "stitch" and segment["blockIndex"] in selected_blocks
             ]
         )
     else:
@@ -3795,8 +3787,7 @@ def write_segments_as_pes(
                 [
                     segment
                     for segment in segments
-                    if segment["blockIndex"] == ordered_block
-                    and segment["kind"] in {"stitch", "travel_after_trim"}
+                    if segment["kind"] == "stitch" and segment["blockIndex"] == ordered_block
                 ]
             )
 
