@@ -186,13 +186,20 @@ def simplify_grid_path(points: list[tuple[int, int]]) -> list[tuple[int, int]]:
 def connected_pixel_components(active: set[tuple[int, int]]) -> list[set[tuple[int, int]]]:
     remaining = set(active)
     components: list[set[tuple[int, int]]] = []
+    neighbors = [
+        (dx, dy)
+        for dy in (-1, 0, 1)
+        for dx in (-1, 0, 1)
+        if dx != 0 or dy != 0
+    ]
     while remaining:
         start = remaining.pop()
         component = {start}
         stack = [start]
         while stack:
             col, row = stack.pop()
-            for neighbor in ((col - 1, row), (col + 1, row), (col, row - 1), (col, row + 1)):
+            for dx, dy in neighbors:
+                neighbor = (col + dx, row + dy)
                 if neighbor in remaining:
                     remaining.remove(neighbor)
                     component.add(neighbor)
@@ -896,8 +903,10 @@ def image_to_segments(
         for col, row in component:
             rows_by_y.setdefault(row, []).append(col)
         planned_runs: list[tuple[list[tuple[float, float]], int]] = []
-        for row_index, row in enumerate(sorted(rows_by_y)):
-            if row % row_step_px:
+        min_row = min(rows_by_y)
+        selected_row_index = 0
+        for row in sorted(rows_by_y):
+            if (row - min_row) % row_step_px:
                 continue
             columns = sorted(rows_by_y[row])
             ranges: list[tuple[int, int]] = []
@@ -909,16 +918,17 @@ def image_to_segments(
                     start = col
                 previous = col
             add_preserved_range(ranges, start, previous, palette_image.width)
-            if row_index % 2:
+            if selected_row_index % 2:
                 ranges.reverse()
             for left, right in ranges:
                 x1 = origin_x + left / px_per_mm
                 y1 = origin_y + row / px_per_mm
                 x2 = origin_x + right / px_per_mm
                 y2 = y1
-                if row_index % 2:
+                if selected_row_index % 2:
                     x1, x2 = x2, x1
-                planned_runs.append(([(x1, y1), (x2, y2)], row_index))
+                planned_runs.append(([(x1, y1), (x2, y2)], selected_row_index))
+            selected_row_index += 1
         for points, row_index in route_planned_runs(planned_runs, start=previous_point, mode=path_planning):
             append_run(block, points[0][0], points[0][1], points[-1][0], points[-1][1], row_index)
 
