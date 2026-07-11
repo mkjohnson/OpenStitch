@@ -79,6 +79,22 @@ from viewer_server import (
 
 OUTPUT_DIR = Path.cwd() / "viewer_output"
 PROJECT_SUFFIX = ".embdproj"
+MM_PER_INCH = 25.4
+
+
+def hex_to_rgb(color: str) -> tuple[int, int, int]:
+    normalized = normalize_hex(color).lstrip("#")
+    return int(normalized[0:2], 16), int(normalized[2:4], 16), int(normalized[4:6], 16)
+
+
+def perceptual_rgb_distance(first: str, second: str) -> float:
+    r1, g1, b1 = hex_to_rgb(first)
+    r2, g2, b2 = hex_to_rgb(second)
+    r_mean = (r1 + r2) / 2
+    red = r1 - r2
+    green = g1 - g2
+    blue = b1 - b2
+    return math.sqrt((2 + r_mean / 256) * red * red + 4 * green * green + (2 + (255 - r_mean) / 256) * blue * blue)
 
 
 def resource_path(relative_path: str) -> Path:
@@ -481,13 +497,24 @@ class StitchCanvas(QWidget):
 
 
 class ThreadRow(QWidget):
-    def __init__(self, block: dict, catalog: list[dict], on_changed, on_add_inventory) -> None:
+    def __init__(
+        self,
+        block: dict,
+        catalog: list[dict],
+        on_changed,
+        on_add_inventory,
+        on_move_up=None,
+        on_move_down=None,
+    ) -> None:
         super().__init__()
         self.block = block
         self.catalog = catalog
         self.on_changed = on_changed
         self.on_add_inventory = on_add_inventory
+        self.on_move_up = on_move_up
+        self.on_move_down = on_move_down
         self._syncing = False
+        self._loading_threads = False
         self.setObjectName("threadRow")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
@@ -512,13 +539,10 @@ class ThreadRow(QWidget):
         edit_row = QHBoxLayout()
         self.hex_input = QLineEdit()
         self.hex_input.setMinimumWidth(84)
+        self.hex_input.textEdited.connect(self.filter_thread_choices_for_text)
         self.hex_input.editingFinished.connect(self.apply_hex)
         self.thread_select = QComboBox()
         self.thread_select.setMinimumWidth(160)
-        self.thread_select.addItem("Known threads", "")
-        for item in catalog:
-            label = f"{item['brand']} {item['number']} {item['name']}"
-            self.thread_select.addItem(label, dict(item))
         self.thread_select.currentIndexChanged.connect(self.apply_thread_choice)
         edit_row.addWidget(self.hex_input)
         edit_row.addWidget(self.thread_select, 1)
@@ -529,11 +553,50 @@ class ThreadRow(QWidget):
         edit_button.clicked.connect(self.choose_color)
         add_inventory = QPushButton("Add to Inventory")
         add_inventory.clicked.connect(lambda: self.on_add_inventory(self))
+        move_up = QPushButton("Up")
+        move_up.clicked.connect(lambda: self.on_move_up(self) if self.on_move_up else None)
+        move_down = QPushButton("Down")
+        move_down.clicked.connect(lambda: self.on_move_down(self) if self.on_move_down else None)
         actions.addStretch(1)
+        actions.addWidget(move_up)
+        actions.addWidget(move_down)
         actions.addWidget(edit_button)
         actions.addWidget(add_inventory)
         layout.addLayout(actions)
+        self.populate_thread_choices()
         self.refresh()
+
+    def catalog_label(self, item: dict, distance: float | None = None) -> str:
+        label = f"{item['brand']} {item['number']} {item['name']}"
+        prefix = f"{item.get('color', '')}  "
+        return f"{prefix}{label}" if distance is None else f"{prefix}{label} ({distance:.0f})"
+
+    def ranked_catalog(self, color: str | None = None) -> list[tuple[dict, float]]:
+        target_color = color or self.block["color"]
+        ranked: list[tuple[dict, float]] = []
+        for item in self.catalog:
+            try:
+                distance = perceptual_rgb_distance(target_color, str(item["color"]))
+            except ValueError:
+                distance = float("inf")
+            ranked.append((item, distance))
+        ranked.sort(key=lambda entry: (entry[1], str(entry[0].get("number", ""))))
+        return ranked
+
+    def populate_thread_choices(self, color: str | None = None) -> None:
+        self._loading_threads = True
+        self.thread_select.clear()
+        self.thread_select.addItem("Closest known thread colors", "")
+        for item, distance in self.ranked_catalog(color)[:80]:
+            self.thread_select.addItem(self.catalog_label(item, distance), dict(item))
+        self._loading_threads = False
+
+    def filter_thread_choices_for_text(self, text: str) -> None:
+        try:
+            color = normalize_hex(text)
+        except ValueError:
+            return
+        self.populate_thread_choices(color)
 
     def refresh(self) -> None:
         color = self.block["color"]
@@ -555,6 +618,7 @@ class ThreadRow(QWidget):
         self.block["color"] = normalized
         if label:
             self.block["label"] = label
+        self.populate_thread_choices()
         self.refresh()
         self.on_changed()
 
@@ -568,6 +632,8 @@ class ThreadRow(QWidget):
         self.set_color(self.hex_input.text())
 
     def apply_thread_choice(self) -> None:
+        if self._loading_threads:
+            return
         item = self.thread_select.currentData()
         if not item:
             return
@@ -601,6 +667,7 @@ class OpenStitchWindow(QMainWindow):
         self.baseline_snapshot: dict | None = None
         self.undo_stack: list[dict] = []
         self._loading_settings = False
+        self._length_display_units = "metric"
         self.play_timer = QTimer(self)
         self.play_timer.timeout.connect(self.advance_playback)
         self.refresh_timer = QTimer(self)
@@ -755,6 +822,73 @@ class OpenStitchWindow(QMainWindow):
         self.right_dock.show()
         self.options_dock.show()
         self.report_dock.show()
+
+    def display_units(self) -> str:
+        if hasattr(self, "units_select"):
+            return "sae" if self.units_select.currentData() == "sae" else "metric"
+        return self._length_display_units
+
+    def length_to_display(self, value_mm: float) -> float:
+        return value_mm / MM_PER_INCH if self.display_units() == "sae" else value_mm
+
+    def display_to_mm(self, value: float) -> float:
+        return value * MM_PER_INCH if self.display_units() == "sae" else value
+
+    def format_length(self, value_mm: float, decimals: int | None = None) -> str:
+        if self.display_units() == "sae":
+            value = value_mm / MM_PER_INCH
+            places = 3 if decimals is None and abs(value) < 1 else 2 if decimals is None else decimals
+            return f"{value:.{places}f} in"
+        places = 1 if decimals is None else decimals
+        return f"{value_mm:.{places}f} mm"
+
+    def format_area_density(self, value_per_mm2: float, label: str) -> str:
+        if self.display_units() == "sae":
+            return f"{value_per_mm2 * (MM_PER_INCH ** 2):.2f} {label}/in2"
+        return f"{value_per_mm2:.2f} {label}/mm2"
+
+    def set_length_control_value(self, control: QDoubleSpinBox, value_mm: float) -> None:
+        control.setValue(value_mm / MM_PER_INCH if self.display_units() == "sae" else value_mm)
+
+    def length_control_mm(self, control: QDoubleSpinBox) -> float:
+        return control.value() * MM_PER_INCH if self.display_units() == "sae" else control.value()
+
+    def update_length_control_units(self) -> None:
+        if not hasattr(self, "fit_width"):
+            return
+        previous_units = self._length_display_units
+        controls = [
+            (self.fit_width, 1.0, 300.0, 3, 1.0),
+            (self.fill_spacing, 0.1, 2.0, 3, 0.05),
+            (self.max_stitch, 0.5, 7.0, 3, 0.1),
+            (self.min_stitch, 0.05, 1.0, 3, 0.05),
+            (self.perimeter_offset, 0.0, 1.5, 3, 0.05),
+        ]
+
+        def current_mm(control: QDoubleSpinBox) -> float:
+            return control.value() * MM_PER_INCH if previous_units == "sae" else control.value()
+
+        values_mm = [current_mm(control) for control, _, _, _, _ in controls]
+        self._length_display_units = self.display_units()
+        was_loading = self._loading_settings
+        self._loading_settings = True
+        try:
+            for control_index, (control, minimum_mm, maximum_mm, sae_decimals, metric_step) in enumerate(controls):
+                value_mm = values_mm[control_index]
+                if self._length_display_units == "sae":
+                    control.setSuffix(" in")
+                    control.setDecimals(sae_decimals)
+                    control.setRange(minimum_mm / MM_PER_INCH, maximum_mm / MM_PER_INCH)
+                    control.setSingleStep(max(0.001, metric_step / MM_PER_INCH))
+                    control.setValue(value_mm / MM_PER_INCH)
+                else:
+                    control.setSuffix(" mm")
+                    control.setDecimals(2 if control in {self.fill_spacing, self.min_stitch, self.perimeter_offset} else 1)
+                    control.setRange(minimum_mm, maximum_mm)
+                    control.setSingleStep(metric_step)
+                    control.setValue(value_mm)
+        finally:
+            self._loading_settings = was_loading
 
     def _playback_bar(self) -> QWidget:
         bar = QFrame()
@@ -1123,11 +1257,15 @@ class OpenStitchWindow(QMainWindow):
             return
         units = self.units_select.currentData() if hasattr(self, "units_select") else "metric"
         self.canvas.set_measurement_units(str(units or "metric"))
+        self.update_length_control_units()
         color_text = self.fabric_color_input.text().strip() if hasattr(self, "fabric_color_input") else "#fbfcfa"
         color = QColor(color_text)
         if color.isValid():
             self.fabric_color_input.setText(color.name())
             self.canvas.set_background_color(color.name())
+        if self.state is not None:
+            self.state.settings["display_units"] = self.display_units()
+            self.update_stats()
 
     def state_snapshot(self) -> dict | None:
         if self.state is None:
@@ -1192,11 +1330,11 @@ class OpenStitchWindow(QMainWindow):
 
     def current_settings(self) -> dict:
         settings = project_settings(
-            fit_width=self.fit_width.value(),
-            fill_spacing=self.fill_spacing.value(),
+            fit_width=self.length_control_mm(self.fit_width),
+            fill_spacing=self.length_control_mm(self.fill_spacing),
             thread_weight=DEFAULT_THREAD_WEIGHT,
-            max_stitch=self.max_stitch.value(),
-            min_stitch=self.min_stitch.value() if hasattr(self, "min_stitch") else 0.30,
+            max_stitch=self.length_control_mm(self.max_stitch),
+            min_stitch=self.length_control_mm(self.min_stitch) if hasattr(self, "min_stitch") else 0.30,
             fill_mode=self.fill_mode.currentText(),
             fill_angle_deg=self.fill_angle.value(),
             max_colors=self.max_colors.value(),
@@ -1205,7 +1343,7 @@ class OpenStitchWindow(QMainWindow):
             display_units=self.units_select.currentData() if hasattr(self, "units_select") else "metric",
             fabric_color=self.fabric_color_input.text().strip() if hasattr(self, "fabric_color_input") else "#fbfcfa",
             stitch_perimeter=self.stitch_perimeter.isChecked() if hasattr(self, "stitch_perimeter") else False,
-            perimeter_offset_mm=self.perimeter_offset.value() if hasattr(self, "perimeter_offset") else 0.24,
+            perimeter_offset_mm=self.length_control_mm(self.perimeter_offset) if hasattr(self, "perimeter_offset") else 0.24,
             perimeter_passes=self.perimeter_passes.value() if hasattr(self, "perimeter_passes") else 1,
             path_planning=str(self.path_planning.currentData() or "min_cuts") if hasattr(self, "path_planning") else "min_cuts",
         )
@@ -1234,12 +1372,19 @@ class OpenStitchWindow(QMainWindow):
     def apply_settings_to_controls(self, settings: dict) -> None:
         self._loading_settings = True
         try:
+            units = str(settings.get("display_units", "metric"))
+            if hasattr(self, "units_select"):
+                index = self.units_select.findData(units)
+                if index >= 0:
+                    self.units_select.setCurrentIndex(index)
+            self._length_display_units = self.display_units()
+            self.update_length_control_units()
             if settings.get("fit_width_mm") not in {"", None}:
-                self.fit_width.setValue(float(settings["fit_width_mm"]))
-            self.fill_spacing.setValue(float(settings.get("fill_spacing_mm", self.fill_spacing.value())))
-            self.max_stitch.setValue(float(settings.get("max_stitch_mm", self.max_stitch.value())))
+                self.set_length_control_value(self.fit_width, float(settings["fit_width_mm"]))
+            self.set_length_control_value(self.fill_spacing, float(settings.get("fill_spacing_mm", self.length_control_mm(self.fill_spacing))))
+            self.set_length_control_value(self.max_stitch, float(settings.get("max_stitch_mm", self.length_control_mm(self.max_stitch))))
             if hasattr(self, "min_stitch"):
-                self.min_stitch.setValue(float(settings.get("min_stitch_mm", self.min_stitch.value())))
+                self.set_length_control_value(self.min_stitch, float(settings.get("min_stitch_mm", self.length_control_mm(self.min_stitch))))
             mode = str(settings.get("fill_mode", self.fill_mode.currentText()))
             index = self.fill_mode.findText(mode)
             if index >= 0:
@@ -1248,18 +1393,13 @@ class OpenStitchWindow(QMainWindow):
             self.max_colors.setValue(int(settings.get("max_colors", self.max_colors.value())))
             self.color_merge.setValue(float(settings.get("color_merge_distance", self.color_merge.value())))
             self.pdf_page.setValue(int(settings.get("pdf_page", self.pdf_page.value())))
-            units = str(settings.get("display_units", "metric"))
-            if hasattr(self, "units_select"):
-                index = self.units_select.findData(units)
-                if index >= 0:
-                    self.units_select.setCurrentIndex(index)
             if hasattr(self, "fabric_color_input"):
                 self.fabric_color_input.setText(str(settings.get("fabric_color", "#fbfcfa")))
                 self.update_view_settings()
             if hasattr(self, "stitch_perimeter"):
                 self.stitch_perimeter.setChecked(bool(settings.get("stitch_perimeter", False)))
             if hasattr(self, "perimeter_offset"):
-                self.perimeter_offset.setValue(float(settings.get("perimeter_offset_mm", 0.24)))
+                self.set_length_control_value(self.perimeter_offset, float(settings.get("perimeter_offset_mm", 0.24)))
             if hasattr(self, "perimeter_passes"):
                 self.perimeter_passes.setValue(int(settings.get("perimeter_passes", 1)))
             if hasattr(self, "path_planning"):
@@ -1304,7 +1444,7 @@ class OpenStitchWindow(QMainWindow):
         self._loading_settings = True
         try:
             self.fill_mode.setCurrentText("mixed")
-            self.fill_spacing.setValue(max(self.fill_spacing.value(), 0.50))
+            self.set_length_control_value(self.fill_spacing, max(self.length_control_mm(self.fill_spacing), 0.50))
         finally:
             self._loading_settings = False
         self.schedule_refresh()
@@ -1325,7 +1465,7 @@ class OpenStitchWindow(QMainWindow):
             + counts.get("color_changes", 0)
         ) / area
         stitch_density = counts.get("needle_points", 0) / area
-        max_stitch = float(self.max_stitch.value())
+        max_stitch = self.length_control_mm(self.max_stitch)
         stitch_lengths = [
             math.hypot(segment["x2"] - segment["x1"], segment["y2"] - segment["y1"])
             for segment in self.state.segments
@@ -1348,17 +1488,19 @@ class OpenStitchWindow(QMainWindow):
                 changes.append("changed fill mode to mixed for a less directional fill")
             if command_density > 2.4:
                 density_scale = math.sqrt(command_density / 2.4)
-                new_spacing = min(2.0, max(self.fill_spacing.value() * density_scale, 0.50))
+                current_spacing = self.length_control_mm(self.fill_spacing)
+                new_spacing = min(2.0, max(current_spacing * density_scale, 0.50))
                 new_spacing = round(new_spacing / 0.05) * 0.05
-                if new_spacing != self.fill_spacing.value():
-                    self.fill_spacing.setValue(new_spacing)
-                    changes.append(f"increased fill spacing to {new_spacing:.2f} mm to reduce saturation")
-            elif stitch_density < 1.2 and self.fill_spacing.value() > 0.25:
-                new_spacing = max(0.25, self.fill_spacing.value() - 0.05)
-                if new_spacing != self.fill_spacing.value():
-                    self.fill_spacing.setValue(new_spacing)
-                    changes.append(f"reduced fill spacing to {new_spacing:.2f} mm to add definition")
-            if frame_note.startswith("Exceeds") and self.fit_width.value():
+                if new_spacing != current_spacing:
+                    self.set_length_control_value(self.fill_spacing, new_spacing)
+                    changes.append(f"increased fill spacing to {self.format_length(new_spacing)} to reduce saturation")
+            elif stitch_density < 1.2 and self.length_control_mm(self.fill_spacing) > 0.25:
+                current_spacing = self.length_control_mm(self.fill_spacing)
+                new_spacing = max(0.25, current_spacing - 0.05)
+                if new_spacing != current_spacing:
+                    self.set_length_control_value(self.fill_spacing, new_spacing)
+                    changes.append(f"reduced fill spacing to {self.format_length(new_spacing)} to add definition")
+            if frame_note.startswith("Exceeds") and self.length_control_mm(self.fit_width):
                 normal_scale = min(
                     BROTHER_DUETTA_MAX_WIDTH_MM / max(width_mm, 0.001),
                     BROTHER_DUETTA_MAX_HEIGHT_MM / max(height_mm, 0.001),
@@ -1369,18 +1511,18 @@ class OpenStitchWindow(QMainWindow):
                 )
                 scale = max(normal_scale, rotated_scale)
                 if 0 < scale < 1:
-                    new_width = max(1.0, self.fit_width.value() * scale * 0.98)
-                    self.fit_width.setValue(new_width)
-                    changes.append(f"reduced fit width to {new_width:.1f} mm so the design can fit the Duetta field")
+                    new_width = max(1.0, self.length_control_mm(self.fit_width) * scale * 0.98)
+                    self.set_length_control_value(self.fit_width, new_width)
+                    changes.append(f"reduced fit width to {self.format_length(new_width)} so the design can fit the Duetta field")
         finally:
             self._loading_settings = False
 
         analysis = [
             f"Machine fit: {frame_note}",
             f"Stitches: {counts.get('needle_points', 0)}",
-            f"Long stitch spans over {max_stitch:.1f} mm: {long_stitches}",
-            f"Long travel/jump spans over 12.0 mm: {long_travels}",
-            f"Density: {stitch_density:.2f} st/mm2, {command_density:.2f} commands/mm2",
+            f"Long stitch spans over {self.format_length(max_stitch)}: {long_stitches}",
+            f"Long travel/jump spans over {self.format_length(12.0)}: {long_travels}",
+            f"Density: {self.format_area_density(stitch_density, 'st')}, {self.format_area_density(command_density, 'commands')}",
             f"Estimated stitch time: {estimate_stitch_time(counts, self.state.color_blocks)}",
         ]
         if changes:
@@ -1646,19 +1788,19 @@ class OpenStitchWindow(QMainWindow):
                 "High saturation risk. Try Apply Safer Density or increase fill spacing."
             )
         if micro_segments:
-            quality_notes.append(f"{micro_segments} preview stitch segments are under 0.30 mm.")
+            quality_notes.append(f"{micro_segments} preview stitch segments are under {self.format_length(0.30)}.")
         quality_text = "\n".join(quality_notes) if quality_notes else "Quality checks: no obvious density warning."
         fill_types = classify_fill_types(self.state.segments, self.state.color_blocks)
         self.stats_label.setText(
             f"{self.state.working_source.name}\n"
-            f"Size: {width_mm:.1f} x {height_mm:.1f} mm\n"
+            f"Size: {self.format_length(width_mm)} x {self.format_length(height_mm)}\n"
             f"Machine fit: {frame_note}\n"
             f"Fill types: {fill_types['summary']}\n"
             f"Path planning: {self.state.settings.get('path_planning', 'min_cuts')}\n"
             f"Needle points: {counts.get('needle_points', 0)}\n"
             f"Jumps: {counts.get('jumps', 0)}  Trims: {counts.get('trims', 0)}  "
             f"Color changes: {counts.get('color_changes', 0)}\n"
-            f"Density: {stitch_density:.2f} st/mm2, {command_density:.2f} commands/mm2\n"
+            f"Density: {self.format_area_density(stitch_density, 'st')}, {self.format_area_density(command_density, 'commands')}\n"
             f"Estimated stitch time: {estimate_stitch_time(counts, self.state.color_blocks)}\n"
             f"PES: {self.state.pes_path.name}\n"
             f"{quality_text}"
@@ -1700,11 +1842,41 @@ class OpenStitchWindow(QMainWindow):
             return
         catalog = self.selected_catalog()
         for block in self.state.color_blocks:
-            row = ThreadRow(block, catalog, self.thread_changed, self.add_thread_row_to_inventory)
+            row = ThreadRow(
+                block,
+                catalog,
+                self.thread_changed,
+                self.add_thread_row_to_inventory,
+                self.move_thread_row_up,
+                self.move_thread_row_down,
+            )
             self.thread_rows.append(row)
             self.thread_layout.insertWidget(self.thread_layout.count() - 1, row)
         self.canvas.set_visible_blocks(self.selected_blocks())
         self.update_shopping_list()
+
+    def move_thread_row_up(self, row: ThreadRow) -> None:
+        self.move_thread_row(row, -1)
+
+    def move_thread_row_down(self, row: ThreadRow) -> None:
+        self.move_thread_row(row, 1)
+
+    def move_thread_row(self, row: ThreadRow, delta: int) -> None:
+        if row not in self.thread_rows:
+            return
+        old_index = self.thread_rows.index(row)
+        new_index = max(0, min(len(self.thread_rows) - 1, old_index + delta))
+        if new_index == old_index:
+            return
+        self.thread_rows.pop(old_index)
+        self.thread_rows.insert(new_index, row)
+        self.thread_layout.removeWidget(row)
+        self.thread_layout.insertWidget(new_index, row)
+        if self.state is not None:
+            ordered = [thread_row.block for thread_row in self.thread_rows]
+            self.state.color_blocks = ordered
+            self.update_color_block_preview()
+            self.update_shopping_list()
 
     def thread_changed(self) -> None:
         if self.state is None:
@@ -1756,18 +1928,22 @@ class OpenStitchWindow(QMainWindow):
                     new_blocks[new_index]["label"] += f" / {label}"
 
         new_segments: list[dict] = []
-        for segment in self.state.segments:
-            old_index = segment["blockIndex"]
-            if old_index not in old_to_new:
+        for row in selected_rows:
+            old_row_index = row.block["index"]
+            if old_row_index not in old_to_new:
                 continue
-            new_index = old_to_new[old_index]
-            new_segment = dict(segment)
-            new_segment["blockIndex"] = new_index
-            new_segment["colorIndex"] = new_index
-            new_segment["color"] = new_blocks[new_index]["color"]
-            if new_segment["kind"] == "stitch":
-                new_blocks[new_index]["stitches"] += 1
-            new_segments.append(new_segment)
+            for segment in self.state.segments:
+                old_index = segment["blockIndex"]
+                if old_index != old_row_index:
+                    continue
+                new_index = old_to_new[old_index]
+                new_segment = dict(segment)
+                new_segment["blockIndex"] = new_index
+                new_segment["colorIndex"] = new_index
+                new_segment["color"] = new_blocks[new_index]["color"]
+                if new_segment["kind"] == "stitch":
+                    new_blocks[new_index]["stitches"] += 1
+                new_segments.append(new_segment)
 
         new_commands: list[dict] = []
         for command in self.state.commands:
@@ -2345,13 +2521,7 @@ class OpenStitchWindow(QMainWindow):
 
     @staticmethod
     def _rgb_distance(first: str, second: str) -> float:
-        def rgb(value: str) -> tuple[int, int, int]:
-            text = value.lstrip("#")
-            return int(text[0:2], 16), int(text[2:4], 16), int(text[4:6], 16)
-
-        a = rgb(first)
-        b = rgb(second)
-        return math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2])
+        return perceptual_rgb_distance(first, second)
 
 
 def main() -> int:
