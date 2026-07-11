@@ -617,6 +617,7 @@ def quantized_pixels(
     max_colors: int,
     color_merge_distance: float = 56.0,
     background_threshold: int = 245,
+    collapse_edge_shades: bool = True,
 ) -> tuple[Image.Image, list[tuple[int, int, int]]]:
     rgb = Image.alpha_composite(Image.new("RGBA", image.size, (255, 255, 255, 255)), image).convert("RGB")
     source_pixels = list(rgb.getdata())
@@ -662,7 +663,8 @@ def quantized_pixels(
     indexed = Image.new("L", rgb.size)
     indexed.putdata([nearest_index(pixel) for pixel in source_pixels])
     indexed, merged_colors = merge_similar_palette_colors(indexed, [*colors, (255, 255, 255)], color_merge_distance)
-    indexed, merged_colors = collapse_antialias_palette_colors(indexed, merged_colors, background_threshold)
+    if collapse_edge_shades:
+        indexed, merged_colors = collapse_antialias_palette_colors(indexed, merged_colors, background_threshold)
     return snap_palette_to_inventory_threads(
         indexed,
         merged_colors,
@@ -682,6 +684,7 @@ def image_to_segments(
     min_run_mm: float = 0.3,
     background_threshold: int = 245,
     color_merge_distance: float = 56.0,
+    collapse_edge_shades: bool = True,
     max_stitch_mm: float = 3.0,
     path_planning: str = "min_cuts",
     trim_after_mm: float = 12.0,
@@ -698,6 +701,7 @@ def image_to_segments(
         max_colors=max_colors,
         color_merge_distance=color_merge_distance,
         background_threshold=background_threshold,
+        collapse_edge_shades=collapse_edge_shades,
     )
     width_mm = image.width / px_per_mm
     height_mm = image.height / px_per_mm

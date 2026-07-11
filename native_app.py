@@ -900,6 +900,12 @@ class OpenStitchWindow(QMainWindow):
         self.color_merge = QDoubleSpinBox()
         self.color_merge.setRange(0, 255)
         self.color_merge.setValue(56)
+        self.collapse_edge_shades = QCheckBox("Collapse edge shades")
+        self.collapse_edge_shades.setChecked(True)
+        self.collapse_edge_shades.setToolTip(
+            "Merge anti-aliased edge colors into the nearest real thread color. "
+            "Turn this off when those extra shades are intentional."
+        )
         self.pdf_page = QSpinBox()
         self.pdf_page.setRange(1, 999)
         self.pdf_page.setValue(1)
@@ -915,6 +921,7 @@ class OpenStitchWindow(QMainWindow):
         form.addRow("Fill angle", self.fill_angle)
         form.addRow("Max colors", self.max_colors)
         form.addRow("Color flattening", self.color_merge)
+        form.addRow("", self.collapse_edge_shades)
         form.addRow("PDF page", self.pdf_page)
         layout.addLayout(form)
         apply_settings = QPushButton("Apply Settings")
@@ -1000,6 +1007,7 @@ class OpenStitchWindow(QMainWindow):
         self.perimeter_passes.valueChanged.connect(self.schedule_refresh)
         self.stitch_perimeter.stateChanged.connect(self.toggle_perimeter_preview)
         self.max_colors.valueChanged.connect(self.schedule_refresh)
+        self.collapse_edge_shades.stateChanged.connect(self.schedule_refresh)
         self.pdf_page.valueChanged.connect(self.schedule_refresh)
         self.fill_mode.currentTextChanged.connect(self.schedule_refresh)
         self.path_planning.currentIndexChanged.connect(self.schedule_refresh)
@@ -1200,6 +1208,7 @@ class OpenStitchWindow(QMainWindow):
             fill_angle_deg=self.fill_angle.value(),
             max_colors=self.max_colors.value(),
             color_merge_distance=self.color_merge.value(),
+            collapse_edge_shades=self.collapse_edge_shades.isChecked() if hasattr(self, "collapse_edge_shades") else True,
             pdf_page=self.pdf_page.value(),
             display_units=self.units_select.currentData() if hasattr(self, "units_select") else "metric",
             fabric_color=self.fabric_color_input.text().strip() if hasattr(self, "fabric_color_input") else "#fbfcfa",
@@ -1246,6 +1255,8 @@ class OpenStitchWindow(QMainWindow):
             self.fill_angle.setValue(float(settings.get("fill_angle_deg", self.fill_angle.value())))
             self.max_colors.setValue(int(settings.get("max_colors", self.max_colors.value())))
             self.color_merge.setValue(float(settings.get("color_merge_distance", self.color_merge.value())))
+            if hasattr(self, "collapse_edge_shades"):
+                self.collapse_edge_shades.setChecked(bool(settings.get("collapse_edge_shades", True)))
             self.pdf_page.setValue(int(settings.get("pdf_page", self.pdf_page.value())))
             units = str(settings.get("display_units", "metric"))
             if hasattr(self, "units_select"):
@@ -1584,6 +1595,7 @@ class OpenStitchWindow(QMainWindow):
                 fill_angle_deg=float(settings["fill_angle_deg"]),
                 path_planning=str(settings.get("path_planning", "min_cuts")),
                 color_merge_distance=float(settings["color_merge_distance"]),
+                collapse_edge_shades=bool(settings.get("collapse_edge_shades", True)),
                 fill_spacing_mm=float(settings["fill_spacing_mm"]),
                 max_stitch_mm=float(settings["max_stitch_mm"]),
                 min_run_mm=float(settings.get("min_stitch_mm", 0.30)),
