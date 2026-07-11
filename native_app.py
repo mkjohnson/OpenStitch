@@ -4,6 +4,7 @@ import base64
 import copy
 from email.message import EmailMessage
 import html
+import io
 import json
 import math
 import os
@@ -2117,13 +2118,25 @@ class OpenStitchWindow(QMainWindow):
             archive.write(self.state.pes_path, arcname=self.state.pes_path.name)
             archive.writestr("thread-shopping-list.txt", self.shopping_list_text())
             archive.writestr("project-summary.txt", summary_text)
+            preview_buffer = io.BytesIO()
+            preview = realistic_preview_image(
+                self.state.segments,
+                self.state.bounds,
+                fabric_color=str(self.state.settings.get("fabric_color", "#fbfcfa")),
+                thread_weight=str(self.state.settings.get("thread_weight", DEFAULT_THREAD_WEIGHT)),
+                selected_blocks=self.selected_blocks(),
+                max_width_px=2200,
+                include_hoop=True,
+            )
+            preview.save(preview_buffer, format="PNG")
+            archive.writestr("realistic-preview.png", preview_buffer.getvalue())
         message = EmailMessage()
         message["Subject"] = f"OpenStitch project: {self.state.pes_path.stem}"
         if recipient.strip():
             message["To"] = recipient.strip()
         message["X-Unsent"] = "1"
         message.set_content(
-            "Attached is the OpenStitch project ZIP with the PES file, thread shopping list, and project summary.\n"
+            "Attached is the OpenStitch project ZIP with the PES file, thread shopping list, project summary, and realistic preview image.\n"
         )
         message.add_attachment(
             zip_path.read_bytes(),

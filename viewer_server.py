@@ -15,15 +15,22 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
+import pyembroidery as embroidery
+
 from image_digitizer import is_raster_source
 from pes_viewer import (
+    apply_thread_metadata,
     build_viewer_html,
     classify_fill_types,
+    collect_segments,
+    design_bounds,
+    normalize_positive_coordinates,
     positive_float,
     write_filtered_pes,
     write_image_as_pes,
     write_svg_as_pes,
 )
+from realistic_preview import realistic_preview_image
 from thread_settings import DEFAULT_THREAD_WEIGHT, normalize_thread_weight, recommended_fill_spacing
 from thread_inventory import add_inventory_item, delete_inventory_item, load_inventory, normalize_hex
 
@@ -971,6 +978,22 @@ class ViewerHandler(SimpleHTTPRequestHandler):
             archive.write(pes_path, arcname=pes_path.name)
             archive.writestr("thread-shopping-list.txt", shopping_text)
             archive.writestr("project-summary.txt", summary_text)
+            pattern = embroidery.read(str(pes_path))
+            if pattern is not None:
+                segments, commands, color_blocks, _ = collect_segments(pattern)
+                segments, color_blocks = apply_thread_metadata(pes_path, segments, color_blocks)
+                segments, commands = normalize_positive_coordinates(segments, commands)
+                preview_buffer = io.BytesIO()
+                preview = realistic_preview_image(
+                    segments,
+                    design_bounds(segments, commands),
+                    fabric_color="#fbfcfa",
+                    thread_weight=DEFAULT_THREAD_WEIGHT,
+                    max_width_px=2200,
+                    include_hoop=True,
+                )
+                preview.save(preview_buffer, format="PNG")
+                archive.writestr("realistic-preview.png", preview_buffer.getvalue())
 
         message = EmailMessage()
         message["Subject"] = f"OpenStitch project: {pes_path.stem}"
@@ -978,7 +1001,7 @@ class ViewerHandler(SimpleHTTPRequestHandler):
             message["To"] = recipient_email
         message["X-Unsent"] = "1"
         message.set_content(
-            "Attached is the OpenStitch project ZIP with the PES file, thread shopping list, and project summary.\n"
+            "Attached is the OpenStitch project ZIP with the PES file, thread shopping list, project summary, and realistic preview image.\n"
         )
         message.add_attachment(
             zip_buffer.getvalue(),
