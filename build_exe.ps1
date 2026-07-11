@@ -16,6 +16,7 @@ if (-not (Test-Path ".venv")) {
     --onefile `
     --windowed `
     --name "OpenStitch" `
+    --icon "static\openstitch.ico" `
     --add-data "templates;templates" `
     --add-data "static;static" `
     app_launcher.py

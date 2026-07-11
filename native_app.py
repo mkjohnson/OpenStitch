@@ -17,7 +17,7 @@ from pathlib import Path
 import pyembroidery as embroidery
 from PIL import Image, ImageColor, ImageDraw, ImageFilter
 from PySide6.QtCore import QPoint, QPointF, QRectF, Qt, QTimer
-from PySide6.QtGui import QAction, QColor, QPainter, QPen
+from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPen
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -78,6 +78,11 @@ from viewer_server import (
 
 OUTPUT_DIR = Path.cwd() / "viewer_output"
 PROJECT_SUFFIX = ".embdproj"
+
+
+def resource_path(relative_path: str) -> Path:
+    base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+    return base / relative_path
 
 
 @dataclass
@@ -326,6 +331,7 @@ class StitchCanvas(QWidget):
             self._draw_needle_points(painter)
         if self.show_markers:
             self._draw_markers(painter)
+        self._draw_playback_needle(painter)
 
     def _draw_grid(self, painter: QPainter) -> None:
         min_x, min_y, max_x, max_y = self.bounds
@@ -431,6 +437,46 @@ class StitchCanvas(QWidget):
             painter.setBrush(color)
             painter.setPen(QPen(QColor("#172026"), 1))
             painter.drawEllipse(point, 4, 4)
+
+    def _current_needle_segment(self) -> dict | None:
+        best: dict | None = None
+        best_step = -1
+        for segment in self.segments:
+            if segment.get("kind") != "stitch":
+                continue
+            step = int(segment.get("step", 0))
+            if step > self.current_step or step < best_step:
+                continue
+            if self.visible_blocks is not None and segment["blockIndex"] not in self.visible_blocks:
+                continue
+            best = segment
+            best_step = step
+        return best
+
+    def _draw_playback_needle(self, painter: QPainter) -> None:
+        if self.current_step <= 0:
+            return
+        segment = self._current_needle_segment()
+        if segment is None:
+            return
+        scale, _, _ = self._transform()
+        point = self._point(segment["x2"], segment["y2"])
+        size = max(8.0, min(22.0, scale * 0.42))
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setPen(QPen(QColor(0, 0, 0, 95), max(2, int(size * 0.22))))
+        painter.drawLine(QPointF(point.x() + size * 0.28, point.y() - size * 2.0), QPointF(point.x() + size * 0.28, point.y() + size * 0.35))
+        painter.setPen(QPen(QColor("#d8dde2"), max(2, int(size * 0.18))))
+        painter.drawLine(QPointF(point.x(), point.y() - size * 2.15), QPointF(point.x(), point.y() + size * 0.25))
+        painter.setPen(QPen(QColor("#5e6770"), max(1, int(size * 0.06))))
+        painter.drawLine(QPointF(point.x(), point.y() - size * 2.15), QPointF(point.x(), point.y() + size * 0.25))
+        painter.setBrush(QColor(segment.get("color", "#2b7fff")))
+        painter.setPen(QPen(QColor("#172026"), 1))
+        painter.drawEllipse(point, size * 0.34, size * 0.34)
+        painter.setBrush(QColor("#f7fbff"))
+        painter.setPen(Qt.NoPen)
+        painter.drawEllipse(QPointF(point.x() - size * 0.10, point.y() - size * 0.12), size * 0.08, size * 0.08)
+        painter.restore()
 
 
 class ThreadRow(QWidget):
@@ -544,6 +590,9 @@ class OpenStitchWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("OpenStitch")
+        icon_path = resource_path("static/openstitch.ico")
+        if icon_path.exists():
+            self.setWindowIcon(QIcon(str(icon_path)))
         self.resize(1320, 820)
         OUTPUT_DIR.mkdir(exist_ok=True)
         self.state: DesignState | None = None

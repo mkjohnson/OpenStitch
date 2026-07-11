@@ -57,11 +57,11 @@ a {
 }
 
 .brand-mark {
-  width: 18px;
-  height: 18px;
-  border: 3px solid var(--teal);
-  border-radius: 50%;
-  box-shadow: 10px 0 0 -3px var(--gold), 20px 0 0 -3px var(--coral);
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  object-fit: cover;
+  box-shadow: 0 6px 16px rgba(18, 32, 28, 0.16);
 }
 
 nav {
@@ -95,6 +95,11 @@ main {
 
 .hero-copy {
   max-width: 700px;
+}
+
+.hero-visual {
+  display: grid;
+  gap: 18px;
 }
 
 .eyebrow {
@@ -181,6 +186,7 @@ h3 {
   color: #4f4530;
 }
 
+.logo-card,
 .preview,
 .example-card,
 .feature-grid article,
@@ -195,6 +201,25 @@ h3 {
   margin: 0;
   overflow: hidden;
   box-shadow: var(--shadow);
+}
+
+.logo-card {
+  display: grid;
+  min-height: 220px;
+  margin: 0;
+  place-items: center;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 54% 48%, rgba(255, 196, 70, 0.16), transparent 34%),
+    linear-gradient(135deg, #eef3ef, #ffffff 45%, #e6eeeb);
+  box-shadow: var(--shadow);
+}
+
+.logo-card img {
+  display: block;
+  width: min(78%, 420px);
+  height: auto;
+  border-radius: 20px;
 }
 
 .preview img,
@@ -254,7 +279,7 @@ h3 {
 .feature-grid,
 .example-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 14px;
 }
 

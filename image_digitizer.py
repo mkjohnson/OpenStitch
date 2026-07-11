@@ -183,6 +183,33 @@ def simplify_grid_path(points: list[tuple[int, int]]) -> list[tuple[int, int]]:
     return simplified
 
 
+def connected_pixel_components(active: set[tuple[int, int]]) -> list[set[tuple[int, int]]]:
+    remaining = set(active)
+    components: list[set[tuple[int, int]]] = []
+    while remaining:
+        start = remaining.pop()
+        component = {start}
+        stack = [start]
+        while stack:
+            col, row = stack.pop()
+            for neighbor in ((col - 1, row), (col + 1, row), (col, row - 1), (col, row + 1)):
+                if neighbor in remaining:
+                    remaining.remove(neighbor)
+                    component.add(neighbor)
+                    stack.append(neighbor)
+        components.append(component)
+    components.sort(key=len, reverse=True)
+    return components
+
+
+def component_centroid(component: set[tuple[int, int]]) -> tuple[float, float]:
+    if not component:
+        return 0.0, 0.0
+    total_x = sum(col for col, _ in component)
+    total_y = sum(row for _, row in component)
+    return total_x / len(component), total_y / len(component)
+
+
 def route_planned_runs(
     runs: list[tuple[list[tuple[float, float]], int]],
     start: tuple[float, float] | None = None,
@@ -812,11 +839,16 @@ def image_to_segments(
             left = max(0, left)
         ranges.append((left, right))
 
-    def stitch_scan_fill(block: dict, palette_index: int, stitch_angles_for_block: list[float]) -> None:
+    def stitch_scan_fill(
+        block: dict,
+        palette_index: int,
+        stitch_angles_for_block: list[float],
+        source_image: Image.Image | None = None,
+    ) -> None:
         for pass_index, stitch_angle in enumerate(stitch_angles_for_block):
-            working_image = palette_image
+            working_image = source_image or palette_image
             if abs(stitch_angle) > 0.001:
-                working_image = palette_image.rotate(
+                working_image = working_image.rotate(
                     stitch_angle,
                     resample=Image.Resampling.NEAREST,
                     expand=True,
@@ -856,6 +888,39 @@ def image_to_segments(
 
             for points, row_index in route_planned_runs(planned_runs, start=previous_point, mode=path_planning):
                 append_run(block, points[0][0], points[0][1], points[-1][0], points[-1][1], row_index)
+
+    def stitch_component_scan_fill(block: dict, component: set[tuple[int, int]]) -> None:
+        if not component:
+            return
+        rows_by_y: dict[int, list[int]] = {}
+        for col, row in component:
+            rows_by_y.setdefault(row, []).append(col)
+        planned_runs: list[tuple[list[tuple[float, float]], int]] = []
+        for row_index, row in enumerate(sorted(rows_by_y)):
+            if row % row_step_px:
+                continue
+            columns = sorted(rows_by_y[row])
+            ranges: list[tuple[int, int]] = []
+            start = columns[0]
+            previous = columns[0]
+            for col in columns[1:]:
+                if col > previous + 1:
+                    add_preserved_range(ranges, start, previous, palette_image.width)
+                    start = col
+                previous = col
+            add_preserved_range(ranges, start, previous, palette_image.width)
+            if row_index % 2:
+                ranges.reverse()
+            for left, right in ranges:
+                x1 = origin_x + left / px_per_mm
+                y1 = origin_y + row / px_per_mm
+                x2 = origin_x + right / px_per_mm
+                y2 = y1
+                if row_index % 2:
+                    x1, x2 = x2, x1
+                planned_runs.append(([(x1, y1), (x2, y2)], row_index))
+        for points, row_index in route_planned_runs(planned_runs, start=previous_point, mode=path_planning):
+            append_run(block, points[0][0], points[0][1], points[-1][0], points[-1][1], row_index)
 
     def stitch_boundary_passes(block: dict, active_pixels: set[tuple[int, int]], pass_count: int) -> None:
         nonlocal previous_point
@@ -925,10 +990,25 @@ def image_to_segments(
                 for col in range(palette_image.width)
                 if pixels[col, row] == palette_index
             }
-            if fill_mode == "contour":
-                interior_angle = best_raster_angle(palette_index)
-                stitch_scan_fill(block, palette_index, [interior_angle])
-            stitch_boundary_passes(block, active, 1)
+            components = connected_pixel_components(active)
+            remaining_components = components
+            while remaining_components:
+                if previous_point is None:
+                    component_index = 0
+                else:
+                    component_index = min(
+                        range(len(remaining_components)),
+                        key=lambda index: math.hypot(
+                            previous_point[0]
+                            - (origin_x + component_centroid(remaining_components[index])[0] / px_per_mm),
+                            previous_point[1]
+                            - (origin_y + component_centroid(remaining_components[index])[1] / px_per_mm),
+                        ),
+                    )
+                component = remaining_components.pop(component_index)
+                if fill_mode == "contour":
+                    stitch_component_scan_fill(block, component)
+                stitch_boundary_passes(block, component, 1)
             continue
 
         block_stitch_angles = [best_raster_angle(palette_index)] if fill_mode == "mixed" else stitch_angles

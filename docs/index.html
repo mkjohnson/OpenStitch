@@ -5,12 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>OpenStitch</title>
   <meta name="description" content="OpenStitch converts SVG, image, PDF, and PES embroidery designs into Brother-compatible PES files with stitch-path previews.">
+  <link rel="icon" href="assets/openstitch.ico">
+  <link rel="apple-touch-icon" href="assets/openstitch-logo.png">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <header class="site-header">
     <a class="brand" href="#top" aria-label="OpenStitch home">
-      <span class="brand-mark"></span>
+      <img class="brand-mark" src="assets/openstitch-logo.png" alt="" aria-hidden="true">
       <span>OpenStitch</span>
     </a>
     <nav aria-label="Primary navigation">
@@ -43,12 +45,17 @@
         </div>
       </div>
 
-      <figure class="preview">
-        <img src="assets/openstitch-preview.png" alt="Generic OpenStitch stitch preview with visible stitch rows, needle points, jumps, and color blocks.">
-        <figcaption>
-          Generic stitch preview with measurements, color blocks, travel paths, and needle points.
-        </figcaption>
-      </figure>
+      <div class="hero-visual">
+        <figure class="logo-card">
+          <img src="assets/openstitch-logo.png" alt="OpenStitch logo mark with teal, gold, and orange thread-inspired rings.">
+        </figure>
+        <figure class="preview">
+          <img src="assets/openstitch-preview.png" alt="Generic OpenStitch stitch preview with visible stitch rows, needle points, jumps, and color blocks.">
+          <figcaption>
+            Generic stitch preview with measurements, color blocks, travel paths, and needle points.
+          </figcaption>
+        </figure>
+      </div>
     </section>
 
     <section class="stats" aria-label="Supported capabilities">
@@ -132,7 +139,7 @@
         <article>
           <span class="card-label">Preview</span>
           <h3>Animated stitch path</h3>
-          <p>Step through the toolpath with zoom, pan, measurements, jumps, trims, color-change markers, optional needle points, and estimated stitch time.</p>
+          <p>Step through the toolpath with zoom, pan, measurements, jumps, trims, color-change markers, optional needle points, and an animated needle position.</p>
         </article>
         <article>
           <span class="card-label">Thread</span>
@@ -143,6 +150,11 @@
           <span class="card-label">Edit</span>
           <h3>Refine before export</h3>
           <p>Deselect or merge color blocks, apply changes, draw or delete stitches, save projects, bundle project files, and export a fresh PES.</p>
+        </article>
+        <article>
+          <span class="card-label">Fill</span>
+          <h3>Contour and path planning</h3>
+          <p>Choose mixed, tatami, crosshatch, outline, or contour-style fills, then use path planning modes to balance speed, clean top stitching, and fewer cuts.</p>
         </article>
       </div>
     </section>
