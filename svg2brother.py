@@ -499,7 +499,15 @@ def optimized_hatch_compound_fill(
     if not polygon_list:
         return []
     best_rows: list[list[tuple[float, float]]] | None = None
-    best_score: tuple[int, float, float, int, float, int] | None = None
+    best_score: tuple[bool, float, int, float, int, float, int] | None = None
+    baseline_rows = hatch_compound_fill(
+        polygon_list,
+        spacing_mm,
+        max_stitch_mm,
+        fill_angle_deg,
+        min_stitch_mm=min_stitch_mm,
+    )
+    baseline_short_count, _, _, _ = stitch_micro_score(baseline_rows, min_stitch_mm)
     for angle in fill_angle_candidates(fill_angle_deg):
         rows = hatch_compound_fill(
             polygon_list,
@@ -509,10 +517,13 @@ def optimized_hatch_compound_fill(
             min_stitch_mm=min_stitch_mm,
         )
         short_count, deficit, stitch_count, travel_total = stitch_micro_score(rows, min_stitch_mm)
+        safety_improvement = baseline_short_count - short_count
+        needs_angle_change = safety_improvement >= max(4, baseline_short_count * 0.25)
         score = (
+            not needs_angle_change and abs(angle - fill_angle_deg) > 0.001,
+            abs(angle - fill_angle_deg),
             short_count,
             round(deficit, 4),
-            abs(angle - fill_angle_deg),
             len(rows),
             round(travel_total, 3),
             stitch_count,

@@ -662,7 +662,21 @@ def image_to_segments(
 
     def best_raster_angle(palette_index: int) -> float:
         candidates = raster_fill_angle_candidates(fill_angle_deg)
-        return min(candidates, key=lambda angle: score_raster_angle(palette_index, angle))
+        baseline = score_raster_angle(palette_index, fill_angle_deg)
+
+        def score(angle: float) -> tuple[bool, float, int, int, int]:
+            candidate = score_raster_angle(palette_index, angle)
+            safety_improvement = baseline[0] - candidate[0]
+            needs_angle_change = safety_improvement >= max(4, baseline[0] * 0.25)
+            return (
+                not needs_angle_change and abs(angle - fill_angle_deg) > 0.001,
+                abs(angle - fill_angle_deg),
+                candidate[0],
+                candidate[2],
+                candidate[3],
+            )
+
+        return min(candidates, key=score)
 
     stitch_angles = [0.0] if fill_mode == "horizontal" else [fill_angle_deg]
     if fill_mode == "crosshatch":
