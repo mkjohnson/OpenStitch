@@ -298,6 +298,40 @@ def connect_adjacent_fill_rows(
     return connected
 
 
+def connect_fill_rows_as_island(
+    rows: list[list[tuple[float, float]]],
+    max_stitch_mm: float,
+    min_stitch_mm: float,
+) -> list[list[tuple[float, float]]]:
+    remaining = [list(row) for row in rows if len(row) >= 2]
+    if not remaining:
+        return []
+    current = remaining.pop(0)
+    while remaining:
+        end = current[-1]
+        best_index = 0
+        best_reverse = False
+        best_distance = float("inf")
+        for index, row in enumerate(remaining):
+            start_distance = distance(end, row[0])
+            end_distance = distance(end, row[-1])
+            if start_distance < best_distance:
+                best_distance = start_distance
+                best_index = index
+                best_reverse = False
+            if end_distance < best_distance:
+                best_distance = end_distance
+                best_index = index
+                best_reverse = True
+        row = remaining.pop(best_index)
+        if best_reverse:
+            row.reverse()
+        connector = split_long_stitches([current[-1], row[0]], max_stitch_mm, min_stitch_mm=min_stitch_mm)
+        current.extend(connector[1:])
+        current.extend(row[1:])
+    return [current]
+
+
 def add_edge_return_rows(
     rows: list[list[tuple[float, float]]],
     max_stitch_mm: float,
@@ -476,13 +510,34 @@ def island_tatami_compound_fill(
     polygon_list = [polygon for polygon in polygons if len(polygon) >= 3]
     if not polygon_list:
         return []
-    return optimized_hatch_compound_fill(
+    rows = optimized_hatch_compound_fill(
         polygon_list,
         spacing_mm,
         max_stitch_mm,
         fill_angle_deg,
         min_stitch_mm=min_stitch_mm,
     )
+    return connect_fill_rows_as_island(rows, max_stitch_mm, min_stitch_mm)
+
+
+def outline_guided_compound_fill(
+    polygons: Iterable[list[tuple[float, float]]],
+    spacing_mm: float,
+    max_stitch_mm: float,
+    fill_angle_deg: float,
+    min_stitch_mm: float = MIN_FILL_STITCH_MM,
+) -> list[list[tuple[float, float]]]:
+    polygon_list = [polygon for polygon in polygons if len(polygon) >= 3]
+    if not polygon_list:
+        return []
+    rows = hatch_compound_fill(
+        polygon_list,
+        spacing_mm,
+        max_stitch_mm,
+        fill_angle_deg,
+        min_stitch_mm=min_stitch_mm,
+    )
+    return connect_fill_rows_as_island(rows, max_stitch_mm, min_stitch_mm)
 
 
 def stitch_micro_score(
@@ -697,7 +752,16 @@ def extract_runs(
     svg = SVG.parse(str(svg_file), reify=True)
     sample_step_px = sample_step_mm * SVG_PX_PER_MM
     fill_mode = fill_mode.lower().strip()
-    if fill_mode not in {"horizontal", "tatami", "island_tatami", "crosshatch", "mixed", "outline", "contour"}:
+    if fill_mode not in {
+        "horizontal",
+        "tatami",
+        "island_tatami",
+        "outline_fill",
+        "crosshatch",
+        "mixed",
+        "outline",
+        "contour",
+    }:
         fill_mode = "tatami"
     fill_angles = [0.0] if fill_mode == "horizontal" else [fill_angle_deg]
     if fill_mode == "crosshatch":
@@ -723,6 +787,17 @@ def extract_runs(
         if filled and fill_mode not in {"outline", "contour"}:
             fill_polygons = [subpath_mm for subpath_mm in subpaths_mm if len(subpath_mm) >= 3]
             for component in compound_fill_components(fill_polygons):
+                if fill_mode == "outline_fill":
+                    fill_rows = outline_guided_compound_fill(
+                        component,
+                        fill_spacing_mm,
+                        max_stitch_mm,
+                        fill_angle_deg,
+                        min_stitch_mm=min_stitch_mm,
+                    )
+                    for row in fill_rows:
+                        runs.append(StitchRun(color=color, points_mm=row))
+                    continue
                 if fill_mode == "island_tatami":
                     fill_rows = island_tatami_compound_fill(
                         component,
@@ -983,7 +1058,16 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--fill-mode",
-        choices=("mixed", "island_tatami", "contour", "tatami", "horizontal", "crosshatch", "outline"),
+        choices=(
+            "mixed",
+            "island_tatami",
+            "outline_fill",
+            "contour",
+            "tatami",
+            "horizontal",
+            "crosshatch",
+            "outline",
+        ),
         default="tatami",
         help="Fill style for filled SVG shapes; default: tatami",
     )

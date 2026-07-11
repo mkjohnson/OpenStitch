@@ -146,7 +146,7 @@ out on very large designs, then shown again when you zoom in.
 
 ## Notes
 
-- Filled closed shapes are stitched with mixed, island tatami, contour, tatami, crosshatch, horizontal, or outline modes.
+- Filled closed shapes are stitched with mixed, island tatami, outline-guided fill, contour, tatami, crosshatch, horizontal, or outline modes.
 - Open paths and stroked shapes are stitched as running stitches.
 - SVG colors are converted into thread color stops.
 - JPG, PNG, and PDF artwork is quantized into a limited color palette before

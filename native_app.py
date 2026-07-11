@@ -1018,7 +1018,9 @@ class OpenStitchWindow(QMainWindow):
         self.perimeter_passes.setRange(1, 3)
         self.perimeter_passes.setValue(1)
         self.fill_mode = QComboBox()
-        self.fill_mode.addItems(["mixed", "island_tatami", "contour", "tatami", "crosshatch", "horizontal", "outline"])
+        self.fill_mode.addItems(
+            ["mixed", "island_tatami", "outline_fill", "contour", "tatami", "crosshatch", "horizontal", "outline"]
+        )
         self.path_planning = QComboBox()
         self.path_planning.addItem("Fast", "fast")
         self.path_planning.addItem("Clean Top Stitch", "clean_top")

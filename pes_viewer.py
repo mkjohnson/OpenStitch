@@ -3311,6 +3311,17 @@ def collect_svg_segments(
                         "step": counts["needle_points"],
                     }
                 )
+            elif not can_stitch_travel:
+                counts["trims"] += 1
+                commands.append(
+                    {
+                        "x": previous_point[0],
+                        "y": previous_point[1],
+                        "command": "trim",
+                        "color": active_block["thread"],
+                        "step": counts["needle_points"],
+                    }
+                )
             if not can_stitch_travel:
                 counts["jumps"] += 1
                 segments.append(
