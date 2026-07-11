@@ -544,37 +544,13 @@ def mixed_hatch_compound_fill(
     polygon_list = [polygon for polygon in polygons if len(polygon) >= 3]
     if not polygon_list:
         return []
-    plans: list[tuple[str, list[list[tuple[float, float]]]]] = [
-        (
-            "tatami",
-            optimized_hatch_compound_fill(
-                polygon_list,
-                spacing_mm,
-                max_stitch_mm,
-                fill_angle_deg,
-                min_stitch_mm=min_stitch_mm,
-            ),
-        ),
-        (
-            "horizontal",
-            hatch_compound_fill(
-                polygon_list,
-                spacing_mm,
-                max_stitch_mm,
-                0.0,
-                min_stitch_mm=min_stitch_mm,
-            ),
-        ),
-    ]
-    best_rows: list[list[tuple[float, float]]] | None = None
-    best_score: tuple[int, float, int, int, float, int] | None = None
-    for plan_index, (_, rows) in enumerate(plans):
-        short_count, deficit, stitch_count, travel_total = stitch_micro_score(rows, min_stitch_mm)
-        score = (short_count, round(deficit, 4), plan_index, len(rows), round(travel_total, 3), stitch_count)
-        if best_score is None or score < best_score:
-            best_score = score
-            best_rows = rows
-    return best_rows or []
+    return optimized_hatch_compound_fill(
+        polygon_list,
+        spacing_mm,
+        max_stitch_mm,
+        fill_angle_deg,
+        min_stitch_mm=min_stitch_mm,
+    )
 
 
 def polygon_centroid(polygon: list[tuple[float, float]]) -> tuple[float, float]:
