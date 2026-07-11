@@ -466,6 +466,38 @@ def hatch_compound_fill(
     return rows
 
 
+def island_tatami_compound_fill(
+    polygons: Iterable[list[tuple[float, float]]],
+    spacing_mm: float,
+    max_stitch_mm: float,
+    fill_angle_deg: float,
+    min_stitch_mm: float = MIN_FILL_STITCH_MM,
+) -> list[list[tuple[float, float]]]:
+    polygon_list = [polygon for polygon in polygons if len(polygon) >= 3]
+    if not polygon_list:
+        return []
+    underlay_spacing = max(spacing_mm * 3.0, 0.9)
+    underlay_max_stitch = min(max(max_stitch_mm, 3.0), 4.0)
+    underlay_angle = fill_angle_deg + 90.0 if abs(fill_angle_deg) > 0.001 else 90.0
+    rows = hatch_compound_fill(
+        polygon_list,
+        underlay_spacing,
+        underlay_max_stitch,
+        underlay_angle,
+        min_stitch_mm=min_stitch_mm,
+    )
+    rows.extend(
+        optimized_hatch_compound_fill(
+            polygon_list,
+            spacing_mm,
+            max_stitch_mm,
+            fill_angle_deg,
+            min_stitch_mm=min_stitch_mm,
+        )
+    )
+    return rows
+
+
 def stitch_micro_score(
     runs: Iterable[list[tuple[float, float]]],
     min_stitch_mm: float = MIN_FILL_STITCH_MM,
@@ -678,7 +710,7 @@ def extract_runs(
     svg = SVG.parse(str(svg_file), reify=True)
     sample_step_px = sample_step_mm * SVG_PX_PER_MM
     fill_mode = fill_mode.lower().strip()
-    if fill_mode not in {"horizontal", "tatami", "crosshatch", "mixed", "outline", "contour"}:
+    if fill_mode not in {"horizontal", "tatami", "island_tatami", "crosshatch", "mixed", "outline", "contour"}:
         fill_mode = "tatami"
     fill_angles = [0.0] if fill_mode == "horizontal" else [fill_angle_deg]
     if fill_mode == "crosshatch":
@@ -704,6 +736,17 @@ def extract_runs(
         if filled and fill_mode not in {"outline", "contour"}:
             fill_polygons = [subpath_mm for subpath_mm in subpaths_mm if len(subpath_mm) >= 3]
             for component in compound_fill_components(fill_polygons):
+                if fill_mode == "island_tatami":
+                    fill_rows = island_tatami_compound_fill(
+                        component,
+                        fill_spacing_mm,
+                        max_stitch_mm,
+                        fill_angle_deg,
+                        min_stitch_mm=min_stitch_mm,
+                    )
+                    for row in fill_rows:
+                        runs.append(StitchRun(color=color, points_mm=row))
+                    continue
                 if fill_mode == "mixed":
                     fill_rows = mixed_hatch_compound_fill(
                         component,
