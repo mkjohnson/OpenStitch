@@ -279,22 +279,13 @@ def connect_adjacent_fill_rows(
 ) -> list[list[tuple[float, float]]]:
     connected: list[list[tuple[float, float]]] = []
     current: list[tuple[float, float]] | None = None
-    connector_limit = max(max_stitch_mm, 0.1)
     for row in rows:
         if current is None:
             current = list(row)
             continue
-        connector_distance = distance(current[-1], row[0])
-        if (
-            connector_distance <= connector_limit
-            and segment_inside_compound_fill(current[-1], row[0], polygons)
-        ):
-            connector = split_long_stitches([current[-1], row[0]], max_stitch_mm)
-            current.extend(connector[1:])
-            current.extend(row[1:])
-        else:
-            connected.append(current)
-            current = list(row)
+        connector = split_long_stitches([current[-1], row[0]], max_stitch_mm)
+        current.extend(connector[1:])
+        current.extend(row[1:])
     if current:
         connected.append(current)
     return connected

@@ -711,6 +711,8 @@ def image_to_segments(
         x2: float,
         y2: float,
         row_index: int,
+        *,
+        force_stitch_travel: bool = False,
     ) -> None:
         nonlocal previous_point, pending_travel
         connected_to_start = False
@@ -718,7 +720,12 @@ def image_to_segments(
             should_trim = pending_travel == "travel_after_color_change"
             travel_distance = math.hypot(previous_point[0] - x1, previous_point[1] - y1)
             connector_limit_mm = min(max_stitch_mm, max(fill_spacing_mm * 4.0, 1.2), 2.0)
-            can_stitch_travel = path_planning == "min_cuts" and not should_trim and travel_distance <= connector_limit_mm
+            can_stitch_travel = (
+                path_planning == "min_cuts"
+                and not should_trim
+                and not pending_travel
+                and (force_stitch_travel or travel_distance <= connector_limit_mm)
+            )
             if pending_travel:
                 commands.append(
                     {
@@ -741,23 +748,30 @@ def image_to_segments(
                     }
                 )
             if can_stitch_travel:
-                counts["needle_points"] += 1
-                counts["stitch_segments"] += 1
-                block["stitches"] += 1
-                segments.append(
-                    {
-                        "x1": previous_point[0],
-                        "y1": previous_point[1],
-                        "x2": x1,
-                        "y2": y1,
-                        "kind": "stitch",
-                        "color": block["color"],
-                        "colorIndex": block["thread"],
-                        "blockIndex": block["index"],
-                        "step": counts["needle_points"],
-                    }
-                )
-                commands.append({"x": x1, "y": y1, "command": "stitch", "color": block["thread"], "step": counts["needle_points"]})
+                segment_count = max(1, int(math.ceil(travel_distance / max(max_stitch_mm, 0.1))))
+                last_x, last_y = previous_point
+                for index in range(1, segment_count + 1):
+                    ratio = index / segment_count
+                    x = previous_point[0] + (x1 - previous_point[0]) * ratio
+                    y = previous_point[1] + (y1 - previous_point[1]) * ratio
+                    counts["needle_points"] += 1
+                    counts["stitch_segments"] += 1
+                    block["stitches"] += 1
+                    segments.append(
+                        {
+                            "x1": last_x,
+                            "y1": last_y,
+                            "x2": x,
+                            "y2": y,
+                            "kind": "stitch",
+                            "color": block["color"],
+                            "colorIndex": block["thread"],
+                            "blockIndex": block["index"],
+                            "step": counts["needle_points"],
+                        }
+                    )
+                    commands.append({"x": x, "y": y, "command": "stitch", "color": block["thread"], "step": counts["needle_points"]})
+                    last_x, last_y = x, y
                 connected_to_start = True
             else:
                 commands.append({"x": x1, "y": y1, "command": "jump", "color": block["thread"], "step": counts["needle_points"]})
@@ -892,8 +906,20 @@ def image_to_segments(
                         y1, y2 = y2, y1
                     planned_runs.append(([(x1, y1), (x2, y2)], row + pass_index))
 
-            for points, row_index in route_planned_runs(planned_runs, start=previous_point, mode=path_planning):
-                append_run(block, points[0][0], points[0][1], points[-1][0], points[-1][1], row_index)
+            groups = connected_planned_run_groups(planned_runs) if path_planning == "min_cuts" else [planned_runs]
+            for group in groups:
+                wrote_group_stitch = False
+                for points, row_index in route_planned_runs(group, start=previous_point, mode=path_planning):
+                    append_run(
+                        block,
+                        points[0][0],
+                        points[0][1],
+                        points[-1][0],
+                        points[-1][1],
+                        row_index,
+                        force_stitch_travel=wrote_group_stitch,
+                    )
+                    wrote_group_stitch = True
 
     def stitch_component_scan_fill(block: dict, component: set[tuple[int, int]]) -> None:
         if not component:
@@ -928,8 +954,18 @@ def image_to_segments(
                     x1, x2 = x2, x1
                 planned_runs.append(([(x1, y1), (x2, y2)], selected_row_index))
             selected_row_index += 1
+        wrote_component_stitch = False
         for points, row_index in route_planned_runs(planned_runs, start=previous_point, mode=path_planning):
-            append_run(block, points[0][0], points[0][1], points[-1][0], points[-1][1], row_index)
+            append_run(
+                block,
+                points[0][0],
+                points[0][1],
+                points[-1][0],
+                points[-1][1],
+                row_index,
+                force_stitch_travel=wrote_component_stitch,
+            )
+            wrote_component_stitch = True
 
     def stitch_boundary_passes(block: dict, active_pixels: set[tuple[int, int]], pass_count: int) -> None:
         nonlocal previous_point
