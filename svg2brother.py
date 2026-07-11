@@ -203,6 +203,65 @@ def rotate_point(
     return (ox + (dx * cos_a) - (dy * sin_a), oy + (dx * sin_a) + (dy * cos_a))
 
 
+def point_in_polygon(point: tuple[float, float], polygon: list[tuple[float, float]]) -> bool:
+    x, y = point
+    inside = False
+    for (x1, y1), (x2, y2) in zip(polygon, polygon[1:]):
+        if (y1 > y) == (y2 > y):
+            continue
+        cross_x = x1 + ((y - y1) * (x2 - x1) / (y2 - y1))
+        if cross_x > x:
+            inside = not inside
+    return inside
+
+
+def point_in_compound_fill(point: tuple[float, float], polygons: list[list[tuple[float, float]]]) -> bool:
+    inside_count = sum(1 for polygon in polygons if point_in_polygon(point, polygon))
+    return inside_count % 2 == 1
+
+
+def segment_inside_compound_fill(
+    start: tuple[float, float],
+    end: tuple[float, float],
+    polygons: list[list[tuple[float, float]]],
+    samples: int = 5,
+) -> bool:
+    for index in range(1, samples + 1):
+        t = index / (samples + 1)
+        point = (start[0] + (end[0] - start[0]) * t, start[1] + (end[1] - start[1]) * t)
+        if not point_in_compound_fill(point, polygons):
+            return False
+    return True
+
+
+def connect_adjacent_fill_rows(
+    rows: list[list[tuple[float, float]]],
+    polygons: list[list[tuple[float, float]]],
+    max_stitch_mm: float,
+) -> list[list[tuple[float, float]]]:
+    connected: list[list[tuple[float, float]]] = []
+    current: list[tuple[float, float]] | None = None
+    connector_limit = max(max_stitch_mm, 0.1)
+    for row in rows:
+        if current is None:
+            current = list(row)
+            continue
+        connector_distance = distance(current[-1], row[0])
+        if (
+            connector_distance <= connector_limit
+            and segment_inside_compound_fill(current[-1], row[0], polygons)
+        ):
+            connector = split_long_stitches([current[-1], row[0]], max_stitch_mm)
+            current.extend(connector[1:])
+            current.extend(row[1:])
+        else:
+            connected.append(current)
+            current = list(row)
+    if current:
+        connected.append(current)
+    return connected
+
+
 def hatch_fill(
     polygon: list[tuple[float, float]],
     spacing_mm: float,
@@ -273,11 +332,13 @@ def hatch_compound_fill(
             row = split_long_stitches(run, max_stitch_mm, min_stitch_mm=min_stitch_mm)
             if len(row) < 2:
                 continue
-            if abs(angle_rad) > 1e-6:
-                row = [rotate_point(point, angle_rad, origin) for point in row]
             rows.append(row)
             row_index += 1
         y += max(spacing_mm, 0.1)
+
+    rows = connect_adjacent_fill_rows(rows, closed_polygons, max_stitch_mm)
+    if abs(angle_rad) > 1e-6:
+        rows = [[rotate_point(point, angle_rad, origin) for point in row] for row in rows]
 
     return rows
 
@@ -285,11 +346,17 @@ def hatch_compound_fill(
 def stitch_micro_score(
     runs: Iterable[list[tuple[float, float]]],
     min_stitch_mm: float = MIN_FILL_STITCH_MM,
-) -> tuple[int, float, int]:
+) -> tuple[int, float, int, float]:
     short_count = 0
     deficit = 0.0
     stitch_count = 0
+    travel_total = 0.0
+    previous_end: tuple[float, float] | None = None
     for run in runs:
+        if previous_end is not None and run:
+            travel_total += min(distance(previous_end, run[0]), distance(previous_end, run[-1]))
+        if run:
+            previous_end = run[-1]
         for start, end in zip(run, run[1:]):
             span = distance(start, end)
             if span <= 0:
@@ -298,7 +365,7 @@ def stitch_micro_score(
             if span < min_stitch_mm:
                 short_count += 1
                 deficit += min_stitch_mm - span
-    return short_count, deficit, stitch_count
+    return short_count, deficit, stitch_count, travel_total
 
 
 def simplify_contour_points(
@@ -344,7 +411,7 @@ def optimized_hatch_compound_fill(
     if not polygon_list:
         return []
     best_rows: list[list[tuple[float, float]]] | None = None
-    best_score: tuple[int, float, int, float] | None = None
+    best_score: tuple[int, int, float, float, int, float] | None = None
     for angle in fill_angle_candidates(fill_angle_deg):
         rows = hatch_compound_fill(
             polygon_list,
@@ -353,8 +420,15 @@ def optimized_hatch_compound_fill(
             angle,
             min_stitch_mm=min_stitch_mm,
         )
-        short_count, deficit, stitch_count = stitch_micro_score(rows, min_stitch_mm)
-        score = (short_count, round(deficit, 4), -stitch_count, abs(angle - fill_angle_deg))
+        short_count, deficit, stitch_count, travel_total = stitch_micro_score(rows, min_stitch_mm)
+        score = (
+            short_count,
+            len(rows),
+            round(travel_total, 3),
+            round(deficit, 4),
+            stitch_count,
+            abs(angle - fill_angle_deg),
+        )
         if best_score is None or score < best_score:
             best_rows = rows
             best_score = score
@@ -412,10 +486,10 @@ def mixed_hatch_compound_fill(
     plans.append(("crosshatch", crosshatch_rows))
 
     best_rows: list[list[tuple[float, float]]] | None = None
-    best_score: tuple[int, float, int, int] | None = None
+    best_score: tuple[int, int, float, float, int, int] | None = None
     for plan_index, (_, rows) in enumerate(plans):
-        short_count, deficit, stitch_count = stitch_micro_score(rows, min_stitch_mm)
-        score = (short_count, round(deficit, 4), stitch_count, plan_index)
+        short_count, deficit, stitch_count, travel_total = stitch_micro_score(rows, min_stitch_mm)
+        score = (short_count, len(rows), round(travel_total, 3), round(deficit, 4), stitch_count, plan_index)
         if best_score is None or score < best_score:
             best_score = score
             best_rows = rows

@@ -447,7 +447,7 @@ def image_to_segments(
                     stitch_estimate += max(1, int(math.ceil((span / px_per_mm) / max(max_stitch_mm, 0.1))))
                     if span < min_run_px * 1.5:
                         short_remainders += 1
-        return short_remainders, -run_count, stitch_estimate, abs(stitch_angle - fill_angle_deg)
+        return short_remainders, run_count, stitch_estimate, abs(stitch_angle - fill_angle_deg)
 
     def best_raster_angle(palette_index: int) -> float:
         candidates = raster_fill_angle_candidates(fill_angle_deg)
