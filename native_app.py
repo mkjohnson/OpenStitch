@@ -392,6 +392,8 @@ class StitchCanvas(QWidget):
             if self.visible_blocks is not None and segment["blockIndex"] not in self.visible_blocks:
                 continue
             kind = segment["kind"]
+            if kind == "travel_after_trim":
+                continue
             if kind != "stitch" and not self.show_jumps:
                 continue
             if kind == "stitch":
@@ -399,8 +401,6 @@ class StitchCanvas(QWidget):
                 pen = QPen(color, stitch_width)
             elif kind == "travel_after_color_change":
                 pen = QPen(QColor("#2b7fff"), 1, Qt.DashLine)
-            elif kind == "travel_after_trim":
-                pen = QPen(QColor("#ff8a3d"), 1, Qt.DashLine)
             else:
                 pen = QPen(QColor("#a6aaa5"), 1, Qt.DotLine)
             painter.setPen(pen)
