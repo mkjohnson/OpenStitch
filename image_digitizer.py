@@ -812,81 +812,8 @@ def image_to_segments(
             left = max(0, left)
         ranges.append((left, right))
 
-    for palette_index in color_order:
-        if palette_index >= len(colors):
-            continue
-        rgb = colors[palette_index]
-        alpha_like_background = is_background_color(rgb, background_threshold)
-        if alpha_like_background:
-            continue
-
-        block = {
-            "index": len(color_blocks),
-            "thread": len(color_blocks),
-            "color": color_to_hex(rgb),
-            "label": f"Image {color_to_hex(rgb)}",
-            "stitches": 0,
-        }
-        color_blocks.append(block)
-        if block["index"] > 0:
-            counts["color_changes"] += 1
-            pending_travel = "travel_after_color_change"
-
-        if fill_mode in {"outline", "contour"}:
-            pixels = palette_image.load()
-            active = {
-                (col, row)
-                for row in range(palette_image.height)
-                for col in range(palette_image.width)
-                if pixels[col, row] == palette_index
-            }
-            layer_index = 0
-            while active:
-                boundary = boundary_pixels(active, palette_image.width, palette_image.height)
-                if not boundary:
-                    break
-                loops = boundary_loops_from_active(active)
-                if previous_point is not None and loops:
-                    loops.sort(
-                        key=lambda loop: min(
-                            math.hypot(
-                                previous_point[0] - (origin_x + point[0] / px_per_mm),
-                                previous_point[1] - (origin_y + point[1] / px_per_mm),
-                            )
-                            for point in (loop[0], loop[-1])
-                        )
-                    )
-                for loop_index, loop in enumerate(loops):
-                    loop = simplify_grid_path(loop)
-                    if len(loop) < 2:
-                        continue
-                    if previous_point is not None:
-                        first = (origin_x + loop[0][0] / px_per_mm, origin_y + loop[0][1] / px_per_mm)
-                        last = (origin_x + loop[-1][0] / px_per_mm, origin_y + loop[-1][1] / px_per_mm)
-                        if math.hypot(previous_point[0] - last[0], previous_point[1] - last[1]) < math.hypot(
-                            previous_point[0] - first[0],
-                            previous_point[1] - first[1],
-                        ):
-                            loop = list(reversed(loop))
-                    for point_index in range(len(loop) - 1):
-                        start = loop[point_index]
-                        end = loop[point_index + 1]
-                        x1 = origin_x + start[0] / px_per_mm
-                        y1 = origin_y + start[1] / px_per_mm
-                        x2 = origin_x + end[0] / px_per_mm
-                        y2 = origin_y + end[1] / px_per_mm
-                        append_run(block, x1, y1, x2, y2, layer_index + loop_index + point_index)
-                if fill_mode == "outline":
-                    break
-                for _ in range(max(1, row_step_px)):
-                    if not active:
-                        break
-                    active.difference_update(boundary_pixels(active, palette_image.width, palette_image.height))
-                layer_index += 1
-            continue
-
-        block_stitch_angles = [best_raster_angle(palette_index)] if fill_mode == "mixed" else stitch_angles
-        for pass_index, stitch_angle in enumerate(block_stitch_angles):
+    def stitch_scan_fill(block: dict, palette_index: int, stitch_angles_for_block: list[float]) -> None:
+        for pass_index, stitch_angle in enumerate(stitch_angles_for_block):
             working_image = palette_image
             if abs(stitch_angle) > 0.001:
                 working_image = palette_image.rotate(
@@ -929,6 +856,83 @@ def image_to_segments(
 
             for points, row_index in route_planned_runs(planned_runs, start=previous_point, mode=path_planning):
                 append_run(block, points[0][0], points[0][1], points[-1][0], points[-1][1], row_index)
+
+    def stitch_boundary_passes(block: dict, active_pixels: set[tuple[int, int]], pass_count: int) -> None:
+        nonlocal previous_point
+        active = set(active_pixels)
+        for layer_index in range(pass_count):
+            if not active:
+                break
+            boundary = boundary_pixels(active, palette_image.width, palette_image.height)
+            if not boundary:
+                break
+            loops = [simplify_grid_path(loop) for loop in boundary_loops_from_active(active)]
+            loops = [loop for loop in loops if len(loop) >= 2]
+            remaining_loops = loops
+            while remaining_loops:
+                if previous_point is None:
+                    loop_index = 0
+                    reverse_loop = False
+                else:
+                    best: tuple[float, int, bool] | None = None
+                    for candidate_index, loop in enumerate(remaining_loops):
+                        first = (origin_x + loop[0][0] / px_per_mm, origin_y + loop[0][1] / px_per_mm)
+                        last = (origin_x + loop[-1][0] / px_per_mm, origin_y + loop[-1][1] / px_per_mm)
+                        forward = math.hypot(previous_point[0] - first[0], previous_point[1] - first[1])
+                        reverse = math.hypot(previous_point[0] - last[0], previous_point[1] - last[1])
+                        option = (min(forward, reverse), candidate_index, reverse < forward)
+                        if best is None or option < best:
+                            best = option
+                    _, loop_index, reverse_loop = best or (0.0, 0, False)
+                loop = remaining_loops.pop(loop_index)
+                if reverse_loop:
+                    loop = list(reversed(loop))
+                for point_index in range(len(loop) - 1):
+                    start = loop[point_index]
+                    end = loop[point_index + 1]
+                    x1 = origin_x + start[0] / px_per_mm
+                    y1 = origin_y + start[1] / px_per_mm
+                    x2 = origin_x + end[0] / px_per_mm
+                    y2 = origin_y + end[1] / px_per_mm
+                    append_run(block, x1, y1, x2, y2, layer_index + point_index)
+            active.difference_update(boundary)
+
+    for palette_index in color_order:
+        if palette_index >= len(colors):
+            continue
+        rgb = colors[palette_index]
+        alpha_like_background = is_background_color(rgb, background_threshold)
+        if alpha_like_background:
+            continue
+
+        block = {
+            "index": len(color_blocks),
+            "thread": len(color_blocks),
+            "color": color_to_hex(rgb),
+            "label": f"Image {color_to_hex(rgb)}",
+            "stitches": 0,
+        }
+        color_blocks.append(block)
+        if block["index"] > 0:
+            counts["color_changes"] += 1
+            pending_travel = "travel_after_color_change"
+
+        if fill_mode in {"outline", "contour"}:
+            pixels = palette_image.load()
+            active = {
+                (col, row)
+                for row in range(palette_image.height)
+                for col in range(palette_image.width)
+                if pixels[col, row] == palette_index
+            }
+            if fill_mode == "contour":
+                interior_angle = best_raster_angle(palette_index)
+                stitch_scan_fill(block, palette_index, [interior_angle])
+            stitch_boundary_passes(block, active, 1)
+            continue
+
+        block_stitch_angles = [best_raster_angle(palette_index)] if fill_mode == "mixed" else stitch_angles
+        stitch_scan_fill(block, palette_index, block_stitch_angles)
 
     if not segments:
         raise ValueError("No stitchable image regions were found.")
