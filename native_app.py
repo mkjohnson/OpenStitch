@@ -456,7 +456,7 @@ class StitchCanvas(QWidget):
             elif kind == "travel_after_trim":
                 pen = QPen(QColor("#ff8a3d"), 1, Qt.DashLine)
             else:
-                pen = QPen(QColor("#a6aaa5"), 1, Qt.DotLine)
+                pen = QPen(QColor("#72d1ff"), 1, Qt.DotLine)
             painter.setPen(pen)
             start = self._point(segment["x1"], segment["y1"])
             end = self._point(segment["x2"], segment["y2"])
@@ -748,7 +748,11 @@ class OpenStitchWindow(QMainWindow):
         report.setMinimumWidth(300)
         self.left_dock = QDockWidget("Project Settings", self)
         self.left_dock.setObjectName("projectDock")
-        self.left_dock.setWidget(self.project_settings_panel)
+        self.left_panel_scroll = QScrollArea()
+        self.left_panel_scroll.setWidgetResizable(True)
+        self.left_panel_scroll.setFrameShape(QFrame.NoFrame)
+        self.left_panel_scroll.setWidget(self.project_settings_panel)
+        self.left_dock.setWidget(self.left_panel_scroll)
         self.left_dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
         self.left_dock.setFeatures(
             QDockWidget.DockWidgetMovable
@@ -785,12 +789,13 @@ class OpenStitchWindow(QMainWindow):
             | QDockWidget.DockWidgetFloatable
             | QDockWidget.DockWidgetClosable
         )
+        self.options_dock.setMinimumHeight(270)
         self.addDockWidget(Qt.RightDockWidgetArea, self.report_dock)
         self.addDockWidget(Qt.RightDockWidgetArea, self.right_dock)
         self.splitDockWidget(self.left_dock, self.options_dock, Qt.Vertical)
         self.splitDockWidget(self.report_dock, self.right_dock, Qt.Vertical)
         self.resizeDocks([self.left_dock, self.right_dock], [330, 340], Qt.Horizontal)
-        self.resizeDocks([self.left_dock, self.options_dock], [560, 260], Qt.Vertical)
+        self.resizeDocks([self.left_dock, self.options_dock], [520, 300], Qt.Vertical)
         self.resizeDocks([self.report_dock, self.right_dock], [280, 560], Qt.Vertical)
         self._build_panel_menu()
 
@@ -848,7 +853,8 @@ class OpenStitchWindow(QMainWindow):
         self.view_menu.addAction(reset_action)
 
     def _show_left_panel(self, panel: QWidget, title: str) -> None:
-        self.left_dock.setWidget(panel)
+        self.left_panel_scroll.takeWidget()
+        self.left_panel_scroll.setWidget(panel)
         self.left_dock.setWindowTitle(title)
         self.left_dock.show()
         self.left_dock.raise_()
@@ -1056,8 +1062,8 @@ class OpenStitchWindow(QMainWindow):
         line.setFrameShape(QFrame.HLine)
         layout.addWidget(line)
         layout.addWidget(QLabel("Legend"))
-        layout.addWidget(self._legend_row("#17201c", "Stitches", "line"))
-        layout.addWidget(self._legend_row("#66736f", "Jump travel", "line"))
+        layout.addWidget(self._legend_row("#f3f7f4", "Stitches", "line"))
+        layout.addWidget(self._legend_row("#72d1ff", "Jump travel", "line"))
         layout.addWidget(self._legend_row("#ff8a3d", "Trim marker"))
         layout.addWidget(self._legend_row("#2b7fff", "Color change marker"))
         layout.addWidget(self._legend_row("#ffc446", "Needle point"))
