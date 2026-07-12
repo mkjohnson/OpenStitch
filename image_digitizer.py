@@ -1028,6 +1028,17 @@ def image_to_segments(
             )
             wrote_component_stitch = True
 
+    def component_source_image(component: set[tuple[int, int]], palette_index: int) -> Image.Image:
+        """Keep one connected island while retaining holes as background pixels."""
+        isolated = palette_image.copy()
+        pixels = isolated.load()
+        component_pixels = component
+        for row in range(palette_image.height):
+            for col in range(palette_image.width):
+                if (col, row) not in component_pixels:
+                    pixels[col, row] = background_fill_index
+        return isolated
+
     def stitch_boundary_passes(block: dict, active_pixels: set[tuple[int, int]], pass_count: int) -> None:
         nonlocal previous_point
         active = set(active_pixels)
@@ -1146,8 +1157,44 @@ def image_to_segments(
                     pending_travel = "travel_after_trim"
             continue
 
-        block_stitch_angles = [best_raster_angle(palette_index)] if fill_mode == "mixed" else stitch_angles
-        stitch_scan_fill(block, palette_index, block_stitch_angles)
+        if fill_mode == "mixed":
+            # Mixed fill still chooses a useful angle, but each connected island
+            # gets its own serpentine pass. This prevents letters and logo pieces
+            # from being reordered as one large same-color scan field.
+            pixels = palette_image.load()
+            active = {
+                (col, row)
+                for row in range(palette_image.height)
+                for col in range(palette_image.width)
+                if pixels[col, row] == palette_index
+            }
+            components = stitchable_components(active, palette_image.width, palette_image.height)
+            selected_angle = best_raster_angle(palette_index)
+            remaining_components = components
+            while remaining_components:
+                if previous_point is None:
+                    component_index = 0
+                else:
+                    component_index = min(
+                        range(len(remaining_components)),
+                        key=lambda index: math.hypot(
+                            previous_point[0]
+                            - (origin_x + component_centroid(remaining_components[index])[0] / px_per_mm),
+                            previous_point[1]
+                            - (origin_y + component_centroid(remaining_components[index])[1] / px_per_mm),
+                        ),
+                    )
+                component = remaining_components.pop(component_index)
+                stitch_scan_fill(
+                    block,
+                    palette_index,
+                    [selected_angle],
+                    source_image=component_source_image(component, palette_index),
+                )
+                if remaining_components:
+                    pending_travel = "travel_after_trim"
+        else:
+            stitch_scan_fill(block, palette_index, stitch_angles)
 
     if not segments:
         raise ValueError("No stitchable image regions were found.")
