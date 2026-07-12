@@ -464,6 +464,56 @@ def edge_background_mask(
     return mask
 
 
+def enclosed_light_negative_space_mask(
+    rgb: Image.Image,
+    edge_background: set[tuple[int, int]],
+    threshold: int,
+    *,
+    light_min: int = 228,
+    neutral_chroma: int = 54,
+    min_hole_pixels: int = 4,
+) -> set[tuple[int, int]]:
+    """Find enclosed pale cutouts that should remain fabric, not thread."""
+    width, height = rgb.size
+    pixels = rgb.load()
+
+    def hole_candidate(color: tuple[int, int, int]) -> bool:
+        return is_background_color(color, threshold) or (
+            min(color) >= light_min and max(color) - min(color) <= neutral_chroma
+        )
+
+    remaining = {
+        (col, row)
+        for row in range(height)
+        for col in range(width)
+        if (col, row) not in edge_background and hole_candidate(pixels[col, row])
+    }
+    holes: set[tuple[int, int]] = set()
+    while remaining:
+        start = remaining.pop()
+        component = {start}
+        pending: deque[tuple[int, int]] = deque([start])
+        touches_edge = start[0] in {0, width - 1} or start[1] in {0, height - 1}
+        while pending:
+            col, row = pending.popleft()
+            for next_col, next_row in (
+                (col - 1, row),
+                (col + 1, row),
+                (col, row - 1),
+                (col, row + 1),
+            ):
+                neighbor = (next_col, next_row)
+                if neighbor not in remaining:
+                    continue
+                remaining.remove(neighbor)
+                component.add(neighbor)
+                pending.append(neighbor)
+                touches_edge = touches_edge or next_col in {0, width - 1} or next_row in {0, height - 1}
+        if not touches_edge and len(component) >= min_hole_pixels:
+            holes.update(component)
+    return holes
+
+
 def color_distance(a: tuple[int, int, int], b: tuple[int, int, int]) -> float:
     return math.sqrt(
         (a[0] - b[0]) ** 2
@@ -603,9 +653,14 @@ def quantized_pixels(
     rgb = Image.alpha_composite(Image.new("RGBA", image.size, (255, 255, 255, 255)), image).convert("RGB")
     source_pixels = list(rgb.getdata())
     edge_background = edge_background_mask(rgb, background_threshold)
+    negative_space = edge_background | enclosed_light_negative_space_mask(
+        rgb,
+        edge_background,
+        background_threshold,
+    )
     foreground_pixels = [
         pixel for index, pixel in enumerate(source_pixels)
-        if (index % rgb.width, index // rgb.width) not in edge_background
+        if (index % rgb.width, index // rgb.width) not in negative_space
         and not is_background_color(pixel, background_threshold)
     ]
     if not foreground_pixels:
@@ -639,7 +694,7 @@ def quantized_pixels(
 
     def nearest_index(pixel: tuple[int, int, int], pixel_index: int) -> int:
         if (
-            (pixel_index % rgb.width, pixel_index // rgb.width) in edge_background
+            (pixel_index % rgb.width, pixel_index // rgb.width) in negative_space
             or is_background_color(pixel, background_threshold)
         ):
             return background_index
