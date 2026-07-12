@@ -18,7 +18,7 @@ from pathlib import Path
 import pyembroidery as embroidery
 from PIL import Image, ImageColor, ImageDraw, ImageFilter
 from PySide6.QtCore import QPoint, QPointF, QRectF, Qt, QTimer
-from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPen
+from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -47,6 +47,7 @@ from PySide6.QtWidgets import (
     QTabWidget,
     QTableWidget,
     QTableWidgetItem,
+    QToolTip,
     QVBoxLayout,
     QWidget,
 )
@@ -233,6 +234,7 @@ class StitchCanvas(QWidget):
         self.edit_mode = False
         self.on_add_stitch = None
         self.on_delete_stitch = None
+        self.on_recolor_stitch = None
         self.background_color = "#fbfcfa"
         self.measurement_units = "metric"
         self.visible_blocks: set[int] | None = None
@@ -290,6 +292,9 @@ class StitchCanvas(QWidget):
     def mousePressEvent(self, event) -> None:  # noqa: N802 - Qt override
         if self.edit_mode:
             point = self._design_point(event.pos())
+            if event.button() == Qt.LeftButton and event.modifiers() & Qt.ShiftModifier and self.on_recolor_stitch:
+                self.on_recolor_stitch(point)
+                return
             if event.button() == Qt.LeftButton and self.on_add_stitch:
                 self.on_add_stitch(point)
                 return
@@ -302,12 +307,44 @@ class StitchCanvas(QWidget):
 
     def mouseMoveEvent(self, event) -> None:  # noqa: N802 - Qt override
         if self.edit_mode:
+            self._show_stitch_tooltip(event)
             return
         if self._drag_start is None:
+            self._show_stitch_tooltip(event)
             return
         delta = event.pos() - self._drag_start
         self.pan = self._drag_pan + QPointF(delta.x(), delta.y())
         self.update()
+
+    def _show_stitch_tooltip(self, event) -> None:
+        nearest: dict | None = None
+        nearest_distance = 8.0
+        for segment in self.segments:
+            if segment.get("kind") != "stitch" or segment.get("step", 0) > self.current_step:
+                continue
+            if self.visible_blocks is not None and segment.get("blockIndex") not in self.visible_blocks:
+                continue
+            start = self._point(segment["x1"], segment["y1"])
+            end = self._point(segment["x2"], segment["y2"])
+            dx = end.x() - start.x()
+            dy = end.y() - start.y()
+            length_sq = dx * dx + dy * dy
+            if length_sq <= 0:
+                distance_px = math.hypot(event.pos().x() - start.x(), event.pos().y() - start.y())
+            else:
+                t = max(0.0, min(1.0, ((event.pos().x() - start.x()) * dx + (event.pos().y() - start.y()) * dy) / length_sq))
+                distance_px = math.hypot(event.pos().x() - (start.x() + t * dx), event.pos().y() - (start.y() + t * dy))
+            if distance_px < nearest_distance:
+                nearest_distance = distance_px
+                nearest = segment
+        if nearest is None:
+            QToolTip.hideText()
+            return
+        QToolTip.showText(
+            event.globalPosition().toPoint(),
+            f"Stitch {nearest.get('step', 0)}\nBlock {int(nearest.get('blockIndex', 0)) + 1}\n{nearest.get('color', '#000000')}",
+            self,
+        )
 
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802 - Qt override
         if event.button() == Qt.LeftButton:
@@ -568,8 +605,13 @@ class ThreadRow(QWidget):
 
     def catalog_label(self, item: dict, distance: float | None = None) -> str:
         label = f"{item['brand']} {item['number']} {item['name']}"
-        prefix = f"{item.get('color', '')}  "
-        return f"{prefix}{label}" if distance is None else f"{prefix}{label} ({distance:.0f})"
+        return label if distance is None else f"{label} ({distance:.0f})"
+
+    @staticmethod
+    def color_icon(color: str) -> QIcon:
+        pixmap = QPixmap(16, 16)
+        pixmap.fill(QColor(color))
+        return QIcon(pixmap)
 
     def ranked_catalog(self, color: str | None = None) -> list[tuple[dict, float]]:
         target_color = color or self.block["color"]
@@ -588,7 +630,7 @@ class ThreadRow(QWidget):
         self.thread_select.clear()
         self.thread_select.addItem("Closest known thread colors", "")
         for item, distance in self.ranked_catalog(color)[:80]:
-            self.thread_select.addItem(self.catalog_label(item, distance), dict(item))
+            self.thread_select.addItem(self.color_icon(str(item["color"])), self.catalog_label(item, distance), dict(item))
         self._loading_threads = False
 
     def filter_thread_choices_for_text(self, text: str) -> None:
@@ -681,17 +723,15 @@ class OpenStitchWindow(QMainWindow):
 
     def _build_ui(self) -> None:
         self._build_menu()
-
-        left = QTabWidget()
-        left.setMinimumWidth(310)
-        left.addTab(self._conversion_tab(), "Convert")
-        left.addTab(self._library_tab(), "Library")
-        left.addTab(self._inventory_tab(), "Inventory")
-        left.addTab(self._settings_tab(), "Settings")
+        self.project_settings_panel = self._conversion_tab()
+        self.library_panel = self._library_tab()
+        self.inventory_panel = self._inventory_tab()
+        self.settings_panel = self._settings_tab()
 
         self.canvas = StitchCanvas()
         self.canvas.on_add_stitch = self.add_manual_stitch
         self.canvas.on_delete_stitch = self.delete_nearest_stitch
+        self.canvas.on_recolor_stitch = self.recolor_nearest_stitch
         preview = QWidget()
         preview_layout = QVBoxLayout(preview)
         preview_layout.setContentsMargins(0, 0, 0, 0)
@@ -706,9 +746,9 @@ class OpenStitchWindow(QMainWindow):
         view_options.setMinimumWidth(240)
         report = self._report_panel()
         report.setMinimumWidth(300)
-        self.left_dock = QDockWidget("Workspace", self)
-        self.left_dock.setObjectName("workspaceDock")
-        self.left_dock.setWidget(left)
+        self.left_dock = QDockWidget("Project Settings", self)
+        self.left_dock.setObjectName("projectDock")
+        self.left_dock.setWidget(self.project_settings_panel)
         self.left_dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
         self.left_dock.setFeatures(
             QDockWidget.DockWidgetMovable
@@ -726,7 +766,6 @@ class OpenStitchWindow(QMainWindow):
             | QDockWidget.DockWidgetFloatable
             | QDockWidget.DockWidgetClosable
         )
-        self.addDockWidget(Qt.RightDockWidgetArea, self.right_dock)
         self.options_dock = QDockWidget("View Options", self)
         self.options_dock.setObjectName("viewOptionsDock")
         self.options_dock.setWidget(view_options)
@@ -736,7 +775,7 @@ class OpenStitchWindow(QMainWindow):
             | QDockWidget.DockWidgetFloatable
             | QDockWidget.DockWidgetClosable
         )
-        self.addDockWidget(Qt.RightDockWidgetArea, self.options_dock)
+        self.addDockWidget(Qt.LeftDockWidgetArea, self.options_dock)
         self.report_dock = QDockWidget("Design Report", self)
         self.report_dock.setObjectName("designReportDock")
         self.report_dock.setWidget(report)
@@ -747,10 +786,12 @@ class OpenStitchWindow(QMainWindow):
             | QDockWidget.DockWidgetClosable
         )
         self.addDockWidget(Qt.RightDockWidgetArea, self.report_dock)
-        self.tabifyDockWidget(self.right_dock, self.options_dock)
-        self.tabifyDockWidget(self.right_dock, self.report_dock)
-        self.right_dock.raise_()
+        self.addDockWidget(Qt.RightDockWidgetArea, self.right_dock)
+        self.splitDockWidget(self.left_dock, self.options_dock, Qt.Vertical)
+        self.splitDockWidget(self.report_dock, self.right_dock, Qt.Vertical)
         self.resizeDocks([self.left_dock, self.right_dock], [330, 340], Qt.Horizontal)
+        self.resizeDocks([self.left_dock, self.options_dock], [560, 260], Qt.Vertical)
+        self.resizeDocks([self.report_dock, self.right_dock], [280, 560], Qt.Vertical)
         self._build_panel_menu()
 
     def _build_menu(self) -> None:
@@ -767,15 +808,50 @@ class OpenStitchWindow(QMainWindow):
         export_preview = QAction("Save Realistic Screenshot...", self)
         export_preview.triggered.connect(self.export_realistic_preview)
         file_menu.addAction(export_preview)
+        email_project = QAction("Email Project...", self)
+        email_project.triggered.connect(self.email_project)
+        file_menu.addAction(email_project)
         file_menu.addSeparator()
         exit_action = QAction("Exit", self)
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
 
+        project_menu = self.menuBar().addMenu("&Project")
+        project_settings = QAction("Project Settings", self)
+        project_settings.triggered.connect(lambda: self._show_left_panel(self.project_settings_panel, "Project Settings"))
+        project_menu.addAction(project_settings)
+        display_settings = QAction("Display Settings", self)
+        display_settings.triggered.connect(lambda: self._show_left_panel(self.settings_panel, "Display Settings"))
+        project_menu.addAction(display_settings)
+
+        library_menu = self.menuBar().addMenu("&Library")
+        library_action = QAction("Design Library", self)
+        library_action.triggered.connect(lambda: self._show_left_panel(self.library_panel, "Design Library"))
+        library_menu.addAction(library_action)
+
+        inventory_menu = self.menuBar().addMenu("&Inventory")
+        inventory_action = QAction("Thread Inventory", self)
+        inventory_action.triggered.connect(lambda: self._show_left_panel(self.inventory_panel, "Thread Inventory"))
+        inventory_menu.addAction(inventory_action)
+
+        analyze_menu = self.menuBar().addMenu("&Analyze && Optimize")
+        safer_density = QAction("Apply Safer Density", self)
+        safer_density.triggered.connect(self.apply_safer_density)
+        analyze_menu.addAction(safer_density)
+        optimize = QAction("Analyze && Optimize", self)
+        optimize.triggered.connect(self.analyze_and_optimize)
+        analyze_menu.addAction(optimize)
+
         self.view_menu = self.menuBar().addMenu("&View")
         reset_action = QAction("Reset Zoom", self)
         reset_action.triggered.connect(lambda: self.canvas.reset_view())
         self.view_menu.addAction(reset_action)
+
+    def _show_left_panel(self, panel: QWidget, title: str) -> None:
+        self.left_dock.setWidget(panel)
+        self.left_dock.setWindowTitle(title)
+        self.left_dock.show()
+        self.left_dock.raise_()
 
     def _build_panel_menu(self) -> None:
         self.view_menu.addSeparator()
@@ -814,10 +890,10 @@ class OpenStitchWindow(QMainWindow):
         self.report_dock.setFloating(False)
         self.addDockWidget(Qt.LeftDockWidgetArea, self.left_dock)
         self.addDockWidget(Qt.RightDockWidgetArea, self.right_dock)
-        self.addDockWidget(Qt.RightDockWidgetArea, self.options_dock)
         self.addDockWidget(Qt.RightDockWidgetArea, self.report_dock)
-        self.tabifyDockWidget(self.right_dock, self.options_dock)
-        self.tabifyDockWidget(self.right_dock, self.report_dock)
+        self.addDockWidget(Qt.LeftDockWidgetArea, self.options_dock)
+        self.splitDockWidget(self.left_dock, self.options_dock, Qt.Vertical)
+        self.splitDockWidget(self.report_dock, self.right_dock, Qt.Vertical)
         self.left_dock.show()
         self.right_dock.show()
         self.options_dock.show()
@@ -908,11 +984,20 @@ class OpenStitchWindow(QMainWindow):
         self.step_slider.valueChanged.connect(
             lambda value: self.step_label.setText(f"{value} / {self.step_slider.maximum()}")
         )
+        self.playback_speed = QComboBox()
+        self.playback_speed.addItem("0.25x", 0.25)
+        self.playback_speed.addItem("0.5x", 0.5)
+        self.playback_speed.addItem("1x", 1.0)
+        self.playback_speed.addItem("2x", 2.0)
+        self.playback_speed.addItem("4x", 4.0)
+        self.playback_speed.setCurrentIndex(2)
+        self.playback_speed.setToolTip("Playback speed")
         layout.addWidget(self.play_button)
         layout.addWidget(pause)
         layout.addWidget(stop)
         layout.addWidget(self.step_slider)
         layout.addWidget(self.step_label)
+        layout.addWidget(self.playback_speed)
         return bar
 
     def _legend_row(self, color: str, label: str, style: str = "dot") -> QWidget:
@@ -944,7 +1029,7 @@ class OpenStitchWindow(QMainWindow):
         self.show_markers = QCheckBox("Show trims/color changes")
         self.show_markers.setChecked(False)
         self.show_markers.stateChanged.connect(self.update_canvas_flags)
-        self.edit_stitches = QCheckBox("Edit stitches: left draw, right delete")
+        self.edit_stitches = QCheckBox("Edit stitches: left draw, Shift+left recolor, right delete")
         self.edit_stitches.setChecked(False)
         self.edit_stitches.stateChanged.connect(self.update_canvas_flags)
         presets = QHBoxLayout()
@@ -1057,32 +1142,6 @@ class OpenStitchWindow(QMainWindow):
         apply_settings = QPushButton("Apply Settings")
         apply_settings.clicked.connect(self.apply_current_settings)
         layout.addWidget(apply_settings)
-        actions_box = QFrame()
-        actions_layout = QVBoxLayout(actions_box)
-        actions_layout.setContentsMargins(0, 0, 0, 0)
-        actions_layout.addWidget(QLabel("File Actions"))
-        open_button = QPushButton("Open and Convert")
-        open_button.clicked.connect(self.open_design)
-        save_pes = QPushButton("Save PES")
-        save_pes.clicked.connect(self.save_pes_as)
-        save_project = QPushButton("Save Project")
-        save_project.clicked.connect(self.save_project_as)
-        export_preview = QPushButton("Realistic Screenshot")
-        export_preview.clicked.connect(self.export_realistic_preview)
-        email_project = QPushButton("Email Project")
-        email_project.clicked.connect(self.email_project)
-        actions_layout.addWidget(open_button)
-        actions_layout.addWidget(save_pes)
-        actions_layout.addWidget(save_project)
-        actions_layout.addWidget(export_preview)
-        actions_layout.addWidget(email_project)
-        layout.addWidget(actions_box)
-        safe_density = QPushButton("Apply Safer Density")
-        safe_density.clicked.connect(self.apply_safer_density)
-        layout.addWidget(safe_density)
-        optimize = QPushButton("Analyze && Optimize")
-        optimize.clicked.connect(self.analyze_and_optimize)
-        layout.addWidget(optimize)
         self.color_preview_label = QLabel("No color blocks yet.")
         self.color_preview_label.setWordWrap(True)
         self.color_preview_label.setTextFormat(Qt.RichText)
@@ -1222,6 +1281,9 @@ class OpenStitchWindow(QMainWindow):
         self.thread_brand = QComboBox()
         for brand in available_thread_brands():
             self.thread_brand.addItem(brand, brand)
+        madeira_index = self.thread_brand.findData("Madeira")
+        if madeira_index >= 0:
+            self.thread_brand.setCurrentIndex(madeira_index)
         self.thread_brand.currentIndexChanged.connect(self.thread_brand_changed)
         brand_row.addWidget(self.thread_brand, 1)
         layout.addLayout(brand_row)
@@ -1359,7 +1421,7 @@ class OpenStitchWindow(QMainWindow):
             brand = self.thread_brand.currentData()
             if brand:
                 return str(brand)
-        return "Floriani"
+        return "Madeira"
 
     def selected_catalog(self) -> list[dict]:
         return [item for item in self.catalog if item.get("brand") == self.selected_thread_brand()]
@@ -1410,7 +1472,7 @@ class OpenStitchWindow(QMainWindow):
                 if index >= 0:
                     self.path_planning.setCurrentIndex(index)
             if hasattr(self, "thread_brand"):
-                index = self.thread_brand.findData(str(settings.get("thread_brand", "Floriani")))
+                index = self.thread_brand.findData(str(settings.get("thread_brand", "Madeira")))
                 if index >= 0:
                     self.thread_brand.setCurrentIndex(index)
         finally:
@@ -2438,6 +2500,67 @@ class OpenStitchWindow(QMainWindow):
         self._manual_stitch_anchor = None
         self.recompute_state_after_manual_edit()
 
+    def recolor_nearest_stitch(self, point: tuple[float, float]) -> None:
+        if self.state is None or not self.state.color_blocks:
+            return
+        best_index: int | None = None
+        best_distance = float("inf")
+        for index, segment in enumerate(self.state.segments):
+            if segment.get("kind") != "stitch":
+                continue
+            distance = self._distance_to_segment(
+                point,
+                (segment["x1"], segment["y1"]),
+                (segment["x2"], segment["y2"]),
+            )
+            if distance < best_distance:
+                best_index = index
+                best_distance = distance
+        if best_index is None or best_distance > 1.5:
+            return
+        segment = self.state.segments[best_index]
+        chosen = QColorDialog.getColor(QColor(segment["color"]), self, "Choose stitch color")
+        if not chosen.isValid():
+            return
+        target_color = chosen.name()
+        target_block = min(
+            self.state.color_blocks,
+            key=lambda block: perceptual_rgb_distance(target_color, block["color"]),
+        )
+        self.push_undo_snapshot()
+        segment["blockIndex"] = target_block["index"]
+        segment["colorIndex"] = target_block.get("thread", target_block["index"])
+        segment["color"] = target_block["color"]
+        self._reroute_color_commands()
+        self._manual_stitch_anchor = None
+        self.recompute_state_after_manual_edit()
+        self.statusBar().showMessage(
+            f"Stitch {segment.get('step', 0)} assigned to Block {target_block['index'] + 1} ({target_block['color']}).",
+            5000,
+        )
+
+    def _reroute_color_commands(self) -> None:
+        if self.state is None:
+            return
+        commands = [command for command in self.state.commands if command.get("command") != "color_change"]
+        previous_block: int | None = None
+        for segment in sorted(self.state.segments, key=lambda item: item.get("step", 0)):
+            if segment.get("kind") != "stitch":
+                continue
+            block_index = int(segment.get("blockIndex", 0))
+            if previous_block is not None and block_index != previous_block:
+                commands.append(
+                    {
+                        "x": segment["x1"],
+                        "y": segment["y1"],
+                        "command": "color_change",
+                        "color": block_index,
+                        "step": segment.get("step", 0),
+                    }
+                )
+            previous_block = block_index
+        self.state.commands = sorted(commands, key=lambda item: item.get("step", 0))
+
     def recompute_state_after_manual_edit(self) -> None:
         if self.state is None:
             return
@@ -2504,7 +2627,8 @@ class OpenStitchWindow(QMainWindow):
     def start_playback(self) -> None:
         if self.step_slider.value() >= self.step_slider.maximum():
             self.step_slider.setValue(0)
-        self.play_timer.start(40)
+        speed = float(self.playback_speed.currentData() or 1.0)
+        self.play_timer.start(max(12, int(round(40 / speed))))
 
     def pause_playback(self) -> None:
         self.play_timer.stop()
@@ -2514,7 +2638,8 @@ class OpenStitchWindow(QMainWindow):
         self.step_slider.setValue(0)
 
     def advance_playback(self) -> None:
-        next_value = self.step_slider.value() + 20
+        speed = float(self.playback_speed.currentData() or 1.0)
+        next_value = self.step_slider.value() + max(1, int(round(20 * speed)))
         if next_value >= self.step_slider.maximum():
             self.step_slider.setValue(self.step_slider.maximum())
             self.play_timer.stop()
