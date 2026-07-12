@@ -42,6 +42,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSlider,
+    QSizePolicy,
     QSpinBox,
     QSplitter,
     QTabWidget,
@@ -575,30 +576,37 @@ class ThreadRow(QWidget):
 
         edit_row = QHBoxLayout()
         self.hex_input = QLineEdit()
-        self.hex_input.setMinimumWidth(84)
+        self.hex_input.setMinimumWidth(72)
         self.hex_input.textEdited.connect(self.filter_thread_choices_for_text)
         self.hex_input.editingFinished.connect(self.apply_hex)
         self.thread_select = QComboBox()
-        self.thread_select.setMinimumWidth(160)
+        self.thread_select.setMinimumWidth(0)
+        self.thread_select.setMinimumContentsLength(10)
+        self.thread_select.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.thread_select.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
         self.thread_select.currentIndexChanged.connect(self.apply_thread_choice)
         edit_row.addWidget(self.hex_input)
         edit_row.addWidget(self.thread_select, 1)
         layout.addLayout(edit_row)
 
-        actions = QHBoxLayout()
+        actions = QVBoxLayout()
+        primary_actions = QHBoxLayout()
         edit_button = QPushButton("Edit")
         edit_button.clicked.connect(self.choose_color)
-        add_inventory = QPushButton("Add to Inventory")
+        add_inventory = QPushButton("Add")
+        add_inventory.setToolTip("Add this thread to inventory")
         add_inventory.clicked.connect(lambda: self.on_add_inventory(self))
+        primary_actions.addWidget(edit_button)
+        primary_actions.addWidget(add_inventory)
+        ordering_actions = QHBoxLayout()
         move_up = QPushButton("Up")
         move_up.clicked.connect(lambda: self.on_move_up(self) if self.on_move_up else None)
         move_down = QPushButton("Down")
         move_down.clicked.connect(lambda: self.on_move_down(self) if self.on_move_down else None)
-        actions.addStretch(1)
-        actions.addWidget(move_up)
-        actions.addWidget(move_down)
-        actions.addWidget(edit_button)
-        actions.addWidget(add_inventory)
+        ordering_actions.addWidget(move_up)
+        ordering_actions.addWidget(move_down)
+        actions.addLayout(primary_actions)
+        actions.addLayout(ordering_actions)
         layout.addLayout(actions)
         self.populate_thread_choices()
         self.refresh()
@@ -1013,7 +1021,7 @@ class OpenStitchWindow(QMainWindow):
         swatch = QLabel()
         swatch.setFixedSize(34, 18)
         if style == "line":
-            swatch.setStyleSheet(f"border-bottom:2px dashed {color};")
+            swatch.setStyleSheet(f"background:{color}; border:1px solid #8c9891; border-radius:2px; margin:6px 8px;")
         else:
             swatch.setStyleSheet(
                 f"background:{color}; border:1px solid #172026; border-radius:7px; margin:2px 10px;"
