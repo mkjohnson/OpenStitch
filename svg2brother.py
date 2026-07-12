@@ -290,9 +290,20 @@ def connect_adjacent_fill_rows(
         if current is None:
             current = list(row)
             continue
-        connector = split_long_stitches([current[-1], row[0]], max_stitch_mm)
-        current.extend(connector[1:])
-        current.extend(row[1:])
+        connector_length = distance(current[-1], row[0])
+        safe_connector = (
+            connector_length <= connector_limit
+            and segment_inside_compound_fill(current[-1], row[0], polygons)
+        )
+        if safe_connector:
+            connector = split_long_stitches([current[-1], row[0]], max_stitch_mm)
+            current.extend(connector[1:])
+            current.extend(row[1:])
+        else:
+            # A hole or a separate island sits between these rows. Keep it as a
+            # separate run so the writer emits a jump/trim, never a fake stitch.
+            connected.append(current)
+            current = list(row)
     if current:
         connected.append(current)
     return connected
@@ -300,36 +311,42 @@ def connect_adjacent_fill_rows(
 
 def connect_fill_rows_as_island(
     rows: list[list[tuple[float, float]]],
+    polygons: list[list[tuple[float, float]]],
     max_stitch_mm: float,
     min_stitch_mm: float,
 ) -> list[list[tuple[float, float]]]:
     remaining = [list(row) for row in rows if len(row) >= 2]
     if not remaining:
         return []
+    connected: list[list[tuple[float, float]]] = []
     current = remaining.pop(0)
     while remaining:
         end = current[-1]
-        best_index = 0
-        best_reverse = False
-        best_distance = float("inf")
+        best: tuple[float, int, bool] | None = None
         for index, row in enumerate(remaining):
             start_distance = distance(end, row[0])
             end_distance = distance(end, row[-1])
-            if start_distance < best_distance:
-                best_distance = start_distance
-                best_index = index
-                best_reverse = False
-            if end_distance < best_distance:
-                best_distance = end_distance
-                best_index = index
-                best_reverse = True
+            if segment_inside_compound_fill(end, row[0], polygons):
+                candidate = (start_distance, index, False)
+                if best is None or candidate < best:
+                    best = candidate
+            if segment_inside_compound_fill(end, row[-1], polygons):
+                candidate = (end_distance, index, True)
+                if best is None or candidate < best:
+                    best = candidate
+        if best is None:
+            connected.append(current)
+            current = remaining.pop(0)
+            continue
+        _, best_index, best_reverse = best
         row = remaining.pop(best_index)
         if best_reverse:
             row.reverse()
         connector = split_long_stitches([current[-1], row[0]], max_stitch_mm, min_stitch_mm=min_stitch_mm)
         current.extend(connector[1:])
         current.extend(row[1:])
-    return [current]
+    connected.append(current)
+    return connected
 
 
 def add_edge_return_rows(
@@ -517,7 +534,7 @@ def island_tatami_compound_fill(
         fill_angle_deg,
         min_stitch_mm=min_stitch_mm,
     )
-    return connect_fill_rows_as_island(rows, max_stitch_mm, min_stitch_mm)
+    return connect_fill_rows_as_island(rows, polygon_list, max_stitch_mm, min_stitch_mm)
 
 
 def outline_guided_compound_fill(
@@ -537,7 +554,7 @@ def outline_guided_compound_fill(
         fill_angle_deg,
         min_stitch_mm=min_stitch_mm,
     )
-    return connect_fill_rows_as_island(rows, max_stitch_mm, min_stitch_mm)
+    return connect_fill_rows_as_island(rows, polygon_list, max_stitch_mm, min_stitch_mm)
 
 
 def stitch_micro_score(
