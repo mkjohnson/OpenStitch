@@ -587,6 +587,40 @@ def merge_similar_palette_colors(
     return palette_image.point(lookup), [group["color"] for group in groups]
 
 
+def absorb_sparse_neutral_edge_shades(
+    palette_image: Image.Image,
+    colors: list[tuple[int, int, int]],
+) -> tuple[Image.Image, list[tuple[int, int, int]]]:
+    """Fold anti-aliased gray edge pixels into a dominant dark thread color."""
+    counts = palette_image.histogram()
+    dark_neutrals = [
+        index
+        for index, color in enumerate(colors)
+        if index < len(counts)
+        and counts[index] > 0
+        and max(color) <= 70
+        and max(color) - min(color) <= 20
+    ]
+    if not dark_neutrals:
+        return palette_image, colors
+    target = max(dark_neutrals, key=lambda index: counts[index])
+    target_count = counts[target]
+    lookup = list(range(256))
+    changed = False
+    for index, color in enumerate(colors):
+        if index == target or index >= len(counts) or counts[index] == 0:
+            continue
+        is_sparse_neutral = (
+            max(color) <= 180
+            and max(color) - min(color) <= 24
+            and counts[index] <= target_count * 0.22
+        )
+        if is_sparse_neutral:
+            lookup[index] = target
+            changed = True
+    return (palette_image.point(lookup), colors) if changed else (palette_image, colors)
+
+
 def snap_palette_to_inventory_threads(
     palette_image: Image.Image,
     colors: list[tuple[int, int, int]],
@@ -703,6 +737,7 @@ def quantized_pixels(
     indexed = Image.new("L", rgb.size)
     indexed.putdata([nearest_index(pixel, index) for index, pixel in enumerate(source_pixels)])
     indexed, merged_colors = merge_similar_palette_colors(indexed, [*colors, (255, 255, 255)], color_merge_distance)
+    indexed, merged_colors = absorb_sparse_neutral_edge_shades(indexed, merged_colors)
     return snap_palette_to_inventory_threads(
         indexed,
         merged_colors,
@@ -1261,8 +1296,14 @@ def image_to_segments(
                             previous_point[1]
                             - (origin_y + component_centroid(remaining_components[index])[1] / px_per_mm),
                         ),
-                    )
+                )
                 component = remaining_components.pop(component_index)
+                # Like a 3D-print perimeter, establish the real outline and
+                # counters before laying down the raster infill. This gives the
+                # later fill an edge to cover against instead of treating the
+                # whole component as disconnected scan rows.
+                if fill_mode == "outline_fill":
+                    stitch_boundary_passes(block, component, 1)
                 stitch_component_scan_fill(block, component)
                 if remaining_components:
                     pending_travel = "travel_after_trim"
