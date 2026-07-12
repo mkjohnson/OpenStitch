@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import math
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
@@ -158,6 +159,7 @@ def to_mm(points_px: Iterable[tuple[float, float]]) -> list[tuple[float, float]]
 
 MIN_FILL_STITCH_MM = 0.3
 MIN_DETAIL_RUN_MM = 0.15
+_FILL_ROUTE_GRID_CACHE: dict[tuple, tuple[float, float, float, frozenset[tuple[int, int]]]] = {}
 
 
 def split_long_stitches(
@@ -276,6 +278,85 @@ def segment_inside_compound_fill(
     return True
 
 
+def route_within_compound_fill(
+    start: tuple[float, float],
+    end: tuple[float, float],
+    polygons: list[list[tuple[float, float]]],
+    grid_step_mm: float,
+) -> list[tuple[float, float]] | None:
+    """Find a short stitchable detour around a counter within one filled shape."""
+    if segment_inside_compound_fill(start, end, polygons):
+        return [start, end]
+
+    step = max(grid_step_mm, 0.25)
+    key = (
+        round(step, 3),
+        tuple(tuple((round(x, 3), round(y, 3)) for x, y in polygon) for polygon in polygons),
+    )
+    grid = _FILL_ROUTE_GRID_CACHE.get(key)
+    if grid is None:
+        min_x = min(x for polygon in polygons for x, _ in polygon)
+        max_x = max(x for polygon in polygons for x, _ in polygon)
+        min_y = min(y for polygon in polygons for _, y in polygon)
+        max_y = max(y for polygon in polygons for _, y in polygon)
+        columns = max(1, int(math.ceil((max_x - min_x) / step)))
+        rows = max(1, int(math.ceil((max_y - min_y) / step)))
+        if columns * rows > 4000:
+            return None
+        valid = frozenset(
+            (column, row)
+            for row in range(rows + 1)
+            for column in range(columns + 1)
+            if point_in_compound_fill((min_x + column * step, min_y + row * step), polygons)
+        )
+        grid = (min_x, min_y, step, valid)
+        if len(_FILL_ROUTE_GRID_CACHE) >= 128:
+            _FILL_ROUTE_GRID_CACHE.clear()
+        _FILL_ROUTE_GRID_CACHE[key] = grid
+    min_x, min_y, step, valid = grid
+    if not valid:
+        return None
+
+    def point_at(node: tuple[int, int]) -> tuple[float, float]:
+        return min_x + node[0] * step, min_y + node[1] * step
+
+    def nearest_visible_node(point: tuple[float, float]) -> tuple[int, int] | None:
+        for node in sorted(valid, key=lambda candidate: distance(point, point_at(candidate)))[:32]:
+            if segment_inside_compound_fill(point, point_at(node), polygons):
+                return node
+        return None
+
+    start_node = nearest_visible_node(start)
+    end_node = nearest_visible_node(end)
+    if start_node is None or end_node is None:
+        return None
+    pending: deque[tuple[int, int]] = deque([start_node])
+    previous: dict[tuple[int, int], tuple[int, int] | None] = {start_node: None}
+    while pending:
+        node = pending.popleft()
+        if node == end_node:
+            break
+        for neighbor in ((node[0] - 1, node[1]), (node[0] + 1, node[1]), (node[0], node[1] - 1), (node[0], node[1] + 1)):
+            if neighbor not in valid or neighbor in previous:
+                continue
+            if not segment_inside_compound_fill(point_at(node), point_at(neighbor), polygons):
+                continue
+            previous[neighbor] = node
+            pending.append(neighbor)
+    if end_node not in previous:
+        return None
+    nodes: list[tuple[int, int]] = []
+    node: tuple[int, int] | None = end_node
+    while node is not None:
+        nodes.append(node)
+        node = previous[node]
+    nodes.reverse()
+    route = [start, *(point_at(node) for node in nodes), end]
+    if all(distance(a, b) <= 1e-6 or segment_inside_compound_fill(a, b, polygons) for a, b in zip(route, route[1:])):
+        return route
+    return None
+
+
 def connect_adjacent_fill_rows(
     rows: list[list[tuple[float, float]]],
     polygons: list[list[tuple[float, float]]],
@@ -335,14 +416,28 @@ def connect_fill_rows_as_island(
                 if best is None or candidate < best:
                     best = candidate
         if best is None:
-            connected.append(current)
-            current = remaining.pop(0)
-            continue
-        _, best_index, best_reverse = best
-        row = remaining.pop(best_index)
-        if best_reverse:
-            row.reverse()
-        connector = split_long_stitches([current[-1], row[0]], max_stitch_mm, min_stitch_mm=min_stitch_mm)
+            # This is typically the other side of a counter. Use the hatch
+            # order and find one contained detour instead of trimming each row.
+            row = remaining[0]
+            forward = route_within_compound_fill(end, row[0], polygons, min_stitch_mm)
+            reverse = route_within_compound_fill(end, row[-1], polygons, min_stitch_mm)
+            if forward is None and reverse is None:
+                connected.append(current)
+                current = remaining.pop(0)
+                continue
+            if reverse is not None and (forward is None or len(reverse) < len(forward)):
+                row = list(reversed(remaining.pop(0)))
+                connector_points = reverse
+            else:
+                row = remaining.pop(0)
+                connector_points = forward or [end, row[0]]
+        else:
+            _, best_index, best_reverse = best
+            row = remaining.pop(best_index)
+            if best_reverse:
+                row.reverse()
+            connector_points = [end, row[0]]
+        connector = split_long_stitches(connector_points, max_stitch_mm, min_stitch_mm=min_stitch_mm)
         current.extend(connector[1:])
         current.extend(row[1:])
     connected.append(current)
