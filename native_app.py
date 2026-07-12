@@ -1046,14 +1046,11 @@ class OpenStitchWindow(QMainWindow):
         self.edit_stitches = QCheckBox("Edit stitches: left draw, Shift+left recolor, right delete")
         self.edit_stitches.setChecked(False)
         self.edit_stitches.stateChanged.connect(self.update_canvas_flags)
-        presets = QHBoxLayout()
-        clean_preview = QPushButton("Clean Preview")
-        clean_preview.clicked.connect(self.apply_clean_preview)
-        diagnostics = QPushButton("Diagnostics")
-        diagnostics.clicked.connect(self.apply_diagnostics_preview)
-        presets.addWidget(clean_preview)
-        presets.addWidget(diagnostics)
-        layout.addLayout(presets)
+        self.diagnostics_toggle = QPushButton("Diagnostics")
+        self.diagnostics_toggle.setCheckable(True)
+        self.diagnostics_toggle.setToolTip("Show or clear jump, needle point, and trim diagnostics")
+        self.diagnostics_toggle.toggled.connect(self.toggle_diagnostics)
+        layout.addWidget(self.diagnostics_toggle)
         layout.addWidget(self.show_jumps)
         layout.addWidget(self.show_points)
         layout.addWidget(self.show_markers)
@@ -1183,6 +1180,10 @@ class OpenStitchWindow(QMainWindow):
         return panel
 
     def apply_clean_preview(self) -> None:
+        if hasattr(self, "diagnostics_toggle"):
+            self.diagnostics_toggle.blockSignals(True)
+            self.diagnostics_toggle.setChecked(False)
+            self.diagnostics_toggle.blockSignals(False)
         self.show_jumps.setChecked(False)
         self.show_points.setChecked(False)
         self.show_markers.setChecked(False)
@@ -1190,11 +1191,23 @@ class OpenStitchWindow(QMainWindow):
         self.update_canvas_flags()
 
     def apply_diagnostics_preview(self) -> None:
+        if hasattr(self, "diagnostics_toggle"):
+            self.diagnostics_toggle.blockSignals(True)
+            self.diagnostics_toggle.setChecked(True)
+            self.diagnostics_toggle.blockSignals(False)
         self.show_jumps.setChecked(True)
         self.show_points.setChecked(True)
         self.show_markers.setChecked(True)
         self.edit_stitches.setChecked(False)
         self.update_canvas_flags()
+
+    def toggle_diagnostics(self, enabled: bool) -> None:
+        if enabled:
+            self.apply_diagnostics_preview()
+            self.diagnostics_toggle.setText("Clear Diagnostics")
+        else:
+            self.apply_clean_preview()
+            self.diagnostics_toggle.setText("Diagnostics")
 
     def _connect_setting_refresh(self) -> None:
         for widget in [
