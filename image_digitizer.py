@@ -6,6 +6,7 @@ import colorsys
 import io
 import re
 import tempfile
+from collections import deque
 from pathlib import Path
 
 import fitz
@@ -412,6 +413,57 @@ def is_background_color(color: tuple[int, int, int], threshold: int) -> bool:
     return min(color) >= threshold
 
 
+def edge_background_mask(
+    rgb: Image.Image,
+    threshold: int,
+    *,
+    neutral_min: int = 120,
+    neutral_chroma: int = 36,
+    max_step: float = 52.0,
+) -> set[tuple[int, int]]:
+    """Find pale/neutral backdrop pixels connected to the image edge."""
+    width, height = rgb.size
+    pixels = rgb.load()
+
+    def backdrop_like(color: tuple[int, int, int]) -> bool:
+        return is_background_color(color, threshold) or (
+            min(color) >= neutral_min and max(color) - min(color) <= neutral_chroma
+        )
+
+    mask: set[tuple[int, int]] = set()
+    pending: deque[tuple[int, int]] = deque()
+    for col in range(width):
+        for row in (0, height - 1):
+            if backdrop_like(pixels[col, row]):
+                pending.append((col, row))
+    for row in range(height):
+        for col in (0, width - 1):
+            if backdrop_like(pixels[col, row]):
+                pending.append((col, row))
+
+    while pending:
+        col, row = pending.popleft()
+        if (col, row) in mask:
+            continue
+        color = pixels[col, row]
+        if not backdrop_like(color):
+            continue
+        mask.add((col, row))
+        for next_col, next_row in (
+            (col - 1, row),
+            (col + 1, row),
+            (col, row - 1),
+            (col, row + 1),
+        ):
+            if not (0 <= next_col < width and 0 <= next_row < height):
+                continue
+            if (next_col, next_row) in mask:
+                continue
+            if color_distance(color, pixels[next_col, next_row]) <= max_step:
+                pending.append((next_col, next_row))
+    return mask
+
+
 def color_distance(a: tuple[int, int, int], b: tuple[int, int, int]) -> float:
     return math.sqrt(
         (a[0] - b[0]) ** 2
@@ -550,10 +602,11 @@ def quantized_pixels(
 ) -> tuple[Image.Image, list[tuple[int, int, int]]]:
     rgb = Image.alpha_composite(Image.new("RGBA", image.size, (255, 255, 255, 255)), image).convert("RGB")
     source_pixels = list(rgb.getdata())
+    edge_background = edge_background_mask(rgb, background_threshold)
     foreground_pixels = [
-        pixel
-        for pixel in source_pixels
-        if not is_background_color(pixel, background_threshold)
+        pixel for index, pixel in enumerate(source_pixels)
+        if (index % rgb.width, index // rgb.width) not in edge_background
+        and not is_background_color(pixel, background_threshold)
     ]
     if not foreground_pixels:
         palette_image = rgb.quantize(colors=max(2, max_colors), method=Image.Quantize.MEDIANCUT)
@@ -584,13 +637,16 @@ def quantized_pixels(
         colors = [(0, 0, 0)]
     background_index = len(colors)
 
-    def nearest_index(pixel: tuple[int, int, int]) -> int:
-        if is_background_color(pixel, background_threshold):
+    def nearest_index(pixel: tuple[int, int, int], pixel_index: int) -> int:
+        if (
+            (pixel_index % rgb.width, pixel_index // rgb.width) in edge_background
+            or is_background_color(pixel, background_threshold)
+        ):
             return background_index
         return min(range(len(colors)), key=lambda index: color_distance(pixel, colors[index]))
 
     indexed = Image.new("L", rgb.size)
-    indexed.putdata([nearest_index(pixel) for pixel in source_pixels])
+    indexed.putdata([nearest_index(pixel, index) for index, pixel in enumerate(source_pixels)])
     indexed, merged_colors = merge_similar_palette_colors(indexed, [*colors, (255, 255, 255)], color_merge_distance)
     return snap_palette_to_inventory_threads(
         indexed,
