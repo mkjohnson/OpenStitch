@@ -85,7 +85,7 @@ def brother_duetta_frame_note(width_mm: float, height_mm: float) -> str:
     return "Fits Brother Duetta extra large frame if rotated."
 
 
-def parse_max_stitch(form: cgi.FieldStorage, default: float = 3.0) -> float:
+def parse_max_stitch(form: cgi.FieldStorage, default: float = 5.0) -> float:
     if "max_stitch_mm" not in form or not form["max_stitch_mm"].value:
         return default
     try:
@@ -269,7 +269,7 @@ def coerce_project_settings(settings: dict) -> dict:
     fill_spacing = float(settings.get("fill_spacing_mm", recommended_fill_spacing(thread_weight)))
     if fill_spacing < 0.1 or fill_spacing > 2:
         raise ValueError("Project fill spacing must be between 0.1 and 2 mm")
-    max_stitch = float(settings.get("max_stitch_mm", 3.0))
+    max_stitch = float(settings.get("max_stitch_mm", 5.0))
     if max_stitch < MIN_BROTHER_STITCH_MM or max_stitch > MAX_BROTHER_EMBROIDERY_STITCH_MM:
         raise ValueError("Project max stitch length must be between 0.5 and 7.0 mm")
     min_stitch = float(settings.get("min_stitch_mm", 0.3))
@@ -790,7 +790,7 @@ class ViewerHandler(SimpleHTTPRequestHandler):
                 return
         thread_weight = parse_thread_weight(form)
         try:
-            fill_spacing = parse_fill_spacing(form, thread_weight, default=0.5)
+            fill_spacing = parse_fill_spacing(form, thread_weight, default=0.4)
         except ValueError as error:
             self.send_app_error(str(error))
             return

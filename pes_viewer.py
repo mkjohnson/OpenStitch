@@ -1105,9 +1105,9 @@ def render_html(
     fit_width_mm: float | None = None,
     fill_mode: str = "tatami",
     fill_angle_deg: float = 45.0,
-    fill_spacing_mm: float = 0.5,
+    fill_spacing_mm: float = 0.4,
     thread_weight: str = DEFAULT_THREAD_WEIGHT,
-    max_stitch_mm: float = 3.0,
+    max_stitch_mm: float = 5.0,
     max_colors: int = 6,
     color_merge_distance: float = 56.0,
     pdf_page: int = 1,
@@ -3417,7 +3417,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--fill-spacing-mm",
         type=positive_float,
-        default=0.5,
+        default=0.4,
         help="For SVG/image/PDF input, distance between hatch-fill rows in millimeters; default: 0.5",
     )
     parser.add_argument(
@@ -3441,7 +3441,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--max-stitch-mm",
         type=positive_float,
-        default=3.0,
+        default=5.0,
         help="For SVG/image/PDF input, maximum stitch length in millimeters; default: 3.0",
     )
     parser.add_argument(
@@ -3484,9 +3484,9 @@ def build_viewer_html(
     sample_step_mm: float = 0.8,
     fill_mode: str = "tatami",
     fill_angle_deg: float = 45.0,
-    fill_spacing_mm: float = 0.5,
+    fill_spacing_mm: float = 0.4,
     thread_weight: str = DEFAULT_THREAD_WEIGHT,
-    max_stitch_mm: float = 3.0,
+    max_stitch_mm: float = 5.0,
     min_stitch_mm: float = 0.3,
     max_colors: int = 6,
     color_merge_distance: float = 56.0,
@@ -3834,9 +3834,9 @@ def write_filtered_pes(
     sample_step_mm: float = 0.8,
     fill_mode: str = "tatami",
     fill_angle_deg: float = 45.0,
-    fill_spacing_mm: float = 0.5,
+    fill_spacing_mm: float = 0.4,
     thread_weight: str = DEFAULT_THREAD_WEIGHT,
-    max_stitch_mm: float = 3.0,
+    max_stitch_mm: float = 5.0,
     min_stitch_mm: float = 0.3,
     max_colors: int = 6,
     color_merge_distance: float = 56.0,
@@ -3917,9 +3917,9 @@ def write_svg_as_pes(
     sample_step_mm: float = 0.8,
     fill_mode: str = "tatami",
     fill_angle_deg: float = 45.0,
-    fill_spacing_mm: float = 0.5,
+    fill_spacing_mm: float = 0.4,
     thread_weight: str = DEFAULT_THREAD_WEIGHT,
-    max_stitch_mm: float = 3.0,
+    max_stitch_mm: float = 5.0,
     max_colors: int = 6,
     color_merge_distance: float = 56.0,
     pdf_page: int = 1,
@@ -3969,7 +3969,7 @@ def write_svg_as_pes(
 
 def write_image_as_pes(source_file: Path, output_file: Path, **settings) -> None:
     settings.pop("thread_weight", None)
-    max_stitch_mm = float(settings.get("max_stitch_mm", 3.0))
+    max_stitch_mm = float(settings.get("max_stitch_mm", 5.0))
     stitch_perimeter = bool(settings.pop("stitch_perimeter", False))
     segments, _, color_blocks, _ = image_to_segments(source_file, **settings)
     write_segments_as_pes(

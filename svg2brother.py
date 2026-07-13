@@ -1287,13 +1287,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--fill-spacing-mm",
         type=positive_float,
-        default=0.5,
+        default=0.4,
         help="Distance between hatch-fill rows in millimeters; default: 0.5",
     )
     parser.add_argument(
         "--max-stitch-mm",
         type=positive_float,
-        default=3.0,
+        default=5.0,
         help="Maximum stitch length in millimeters; default: 3.0",
     )
     parser.add_argument(

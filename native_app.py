@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pyembroidery as embroidery
 from PIL import Image, ImageColor, ImageDraw, ImageFilter
-from PySide6.QtCore import QPoint, QPointF, QRectF, Qt, QTimer
+from PySide6.QtCore import QPoint, QPointF, QRectF, Qt, QSettings, QTimer
 from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
@@ -70,7 +70,7 @@ from pes_viewer import (
 )
 from thread_catalog import available_thread_brands, load_thread_catalog
 from thread_inventory import add_inventory_item, delete_inventory_item, load_inventory, normalize_hex
-from thread_settings import DEFAULT_THREAD_WEIGHT, recommended_fill_spacing, thread_diameter_mm
+from thread_settings import DEFAULT_THREAD_WEIGHT, thread_diameter_mm
 from viewer_server import project_settings, project_summary_text, safe_name, write_project_file
 from viewer_server import (
     BROTHER_DUETTA_MAX_HEIGHT_MM,
@@ -812,6 +812,8 @@ class OpenStitchWindow(QMainWindow):
         open_action = QAction("Open Design...", self)
         open_action.triggered.connect(self.open_design)
         file_menu.addAction(open_action)
+        self.recent_files_menu = file_menu.addMenu("Recent Files")
+        self.recent_files_menu.aboutToShow.connect(self.populate_recent_files_menu)
         save_pes = QAction("Save PES As...", self)
         save_pes.triggered.connect(self.save_pes_as)
         file_menu.addAction(save_pes)
@@ -1090,11 +1092,11 @@ class OpenStitchWindow(QMainWindow):
         self.fill_spacing.setRange(0.1, 2.0)
         self.fill_spacing.setDecimals(2)
         self.fill_spacing.setSingleStep(0.05)
-        self.fill_spacing.setValue(recommended_fill_spacing(DEFAULT_THREAD_WEIGHT))
+        self.fill_spacing.setValue(0.40)
         self.max_stitch = QDoubleSpinBox()
         self.max_stitch.setRange(0.5, 7.0)
         self.max_stitch.setDecimals(1)
-        self.max_stitch.setValue(3.0)
+        self.max_stitch.setValue(5.0)
         self.max_stitch.setSuffix(" mm")
         self.min_stitch = QDoubleSpinBox()
         self.min_stitch.setRange(0.05, 1.0)
@@ -1670,14 +1672,50 @@ class OpenStitchWindow(QMainWindow):
         if path:
             self.load_path(Path(path))
 
+    def recent_file_paths(self) -> list[Path]:
+        settings = QSettings("OpenStitch", "OpenStitch")
+        saved = settings.value("recentFiles", [], type=list)
+        return [Path(str(value)) for value in saved if Path(str(value)).is_file()]
+
+    def remember_recent_file(self, path: Path) -> None:
+        if not path.is_file():
+            return
+        current = [item for item in self.recent_file_paths() if item.resolve() != path.resolve()]
+        QSettings("OpenStitch", "OpenStitch").setValue(
+            "recentFiles",
+            [str(path.resolve()), *(str(item) for item in current[:9])],
+        )
+
+    def populate_recent_files_menu(self) -> None:
+        self.recent_files_menu.clear()
+        paths = self.recent_file_paths()
+        if not paths:
+            empty = QAction("No recent files", self)
+            empty.setEnabled(False)
+            self.recent_files_menu.addAction(empty)
+            return
+        for path in paths:
+            action = QAction(path.name, self)
+            action.setToolTip(str(path))
+            action.triggered.connect(lambda checked=False, selected=path: self.load_path(selected))
+            self.recent_files_menu.addAction(action)
+        self.recent_files_menu.addSeparator()
+        clear_action = QAction("Clear Recent Files", self)
+        clear_action.triggered.connect(
+            lambda: QSettings("OpenStitch", "OpenStitch").remove("recentFiles")
+        )
+        self.recent_files_menu.addAction(clear_action)
+
     def load_path(self, path: Path) -> None:
         try:
+            recent_path = path
             if path.suffix.lower() == PROJECT_SUFFIX:
                 path, settings = self.unpack_project(path)
             else:
                 settings = self.current_settings()
             self.apply_settings_to_controls(settings)
             self.convert_path(path, settings)
+            self.remember_recent_file(recent_path)
         except Exception as error:
             QMessageBox.critical(self, "OpenStitch", str(error))
 
