@@ -13,7 +13,7 @@ import fitz
 import pyembroidery as embroidery
 from PIL import Image, ImageChops, ImageOps
 
-from svg2brother import EMB_UNITS_PER_MM, make_thread
+from svg2brother import EMB_UNITS_PER_MM, make_thread, route_along_compound_boundary
 from thread_inventory import hex_to_rgb, load_inventory
 
 
@@ -918,20 +918,24 @@ def image_to_segments(
         x2: float,
         y2: float,
         row_index: int,
-        *,
-        force_stitch_travel: bool = False,
     ) -> None:
         nonlocal previous_point, pending_travel
         connected_to_start = False
         if previous_point is not None and math.hypot(previous_point[0] - x1, previous_point[1] - y1) > 0.001:
-            should_trim = pending_travel in {"travel_after_color_change", "travel_after_trim"}
             travel_distance = math.hypot(previous_point[0] - x1, previous_point[1] - y1)
             connector_limit_mm = min(max_stitch_mm, max(fill_spacing_mm * 4.0, 1.2), 2.0)
+            # A travel move is only safe as an actual stitch between adjacent
+            # scan rows. Wider gaps are different islands, counters, or a new
+            # component and must be trimmed before the jump.
+            should_trim = (
+                pending_travel in {"travel_after_color_change", "travel_after_trim"}
+                or travel_distance > connector_limit_mm
+            )
             can_stitch_travel = (
-                path_planning == "min_cuts"
+                path_planning in {"min_cuts", "clean_top"}
                 and not should_trim
                 and not pending_travel
-                and (force_stitch_travel or travel_distance <= connector_limit_mm)
+                and travel_distance <= connector_limit_mm
             )
             if pending_travel == "travel_after_color_change":
                 commands.append(
@@ -1115,7 +1119,6 @@ def image_to_segments(
 
             groups = connected_planned_run_groups(planned_runs) if path_planning == "min_cuts" else [planned_runs]
             for group in groups:
-                wrote_group_stitch = False
                 for points, row_index in route_planned_runs(group, start=previous_point, mode=path_planning):
                     append_run(
                         block,
@@ -1124,13 +1127,41 @@ def image_to_segments(
                         points[-1][0],
                         points[-1][1],
                         row_index,
-                        force_stitch_travel=wrote_group_stitch,
                     )
-                    wrote_group_stitch = True
 
     def stitch_component_scan_fill(block: dict, component: set[tuple[int, int]]) -> None:
         if not component:
             return
+        boundary_paths = [
+            [
+                (origin_x + col / px_per_mm, origin_y + row / px_per_mm)
+                for col, row in simplify_grid_path(loop)
+            ]
+            for loop in boundary_loops_from_active(component)
+        ]
+        boundary_paths = [path for path in boundary_paths if len(path) >= 3]
+
+        def stitch_boundary_connector(target: tuple[float, float], row_index: int) -> bool:
+            """Reuse the component edge when a scan row is separated by a hole."""
+            if previous_point is None or not boundary_paths:
+                return False
+            attachment_limit = max(1.5 / px_per_mm, fill_spacing_mm * 1.5, 0.45)
+            route = route_along_compound_boundary(
+                previous_point,
+                target,
+                boundary_paths,
+                attachment_limit,
+            )
+            if route is None or len(route) < 2:
+                return False
+            for start, end in zip(route, route[1:]):
+                if math.hypot(start[0] - end[0], start[1] - end[1]) <= 0.001:
+                    continue
+                append_run(block, start[0], start[1], end[0], end[1], row_index)
+            return previous_point is not None and math.hypot(
+                previous_point[0] - target[0], previous_point[1] - target[1]
+            ) <= 0.001
+
         rows_by_y: dict[int, list[int]] = {}
         for col, row in component:
             rows_by_y.setdefault(row, []).append(col)
@@ -1161,8 +1192,8 @@ def image_to_segments(
                     x1, x2 = x2, x1
                 planned_runs.append(([(x1, y1), (x2, y2)], selected_row_index))
             selected_row_index += 1
-        wrote_component_stitch = False
         for points, row_index in route_planned_runs(planned_runs, start=previous_point, mode=path_planning):
+            stitch_boundary_connector(points[0], row_index)
             append_run(
                 block,
                 points[0][0],
@@ -1170,9 +1201,7 @@ def image_to_segments(
                 points[-1][0],
                 points[-1][1],
                 row_index,
-                force_stitch_travel=wrote_component_stitch,
             )
-            wrote_component_stitch = True
 
     def component_source_image(component: set[tuple[int, int]], palette_index: int) -> Image.Image:
         """Keep one connected island while retaining holes as background pixels."""
