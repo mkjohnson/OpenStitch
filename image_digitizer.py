@@ -924,6 +924,10 @@ def image_to_segments(
         if previous_point is not None and math.hypot(previous_point[0] - x1, previous_point[1] - y1) > 0.001:
             travel_distance = math.hypot(previous_point[0] - x1, previous_point[1] - y1)
             connector_limit_mm = min(max_stitch_mm, max(fill_spacing_mm * 4.0, 1.2), 2.0)
+            if path_planning == "clean_top":
+                # Keep the visible pass to true row handoffs. A wider bridge
+                # may cross an earlier line, so use a trimmed jump instead.
+                connector_limit_mm = min(connector_limit_mm, max(fill_spacing_mm * 2.0, 0.6))
             # A travel move is only safe as an actual stitch between adjacent
             # scan rows. Wider gaps are different islands, counters, or a new
             # component and must be trimmed before the jump.
