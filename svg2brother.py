@@ -357,6 +357,89 @@ def route_within_compound_fill(
     return None
 
 
+def nearest_point_on_segment(
+    point: tuple[float, float],
+    start: tuple[float, float],
+    end: tuple[float, float],
+) -> tuple[tuple[float, float], float]:
+    """Return the closest point on a line segment and its distance."""
+    dx = end[0] - start[0]
+    dy = end[1] - start[1]
+    length_squared = dx * dx + dy * dy
+    if length_squared <= 1e-12:
+        return start, distance(point, start)
+    fraction = ((point[0] - start[0]) * dx + (point[1] - start[1]) * dy) / length_squared
+    fraction = max(0.0, min(1.0, fraction))
+    closest = (start[0] + fraction * dx, start[1] + fraction * dy)
+    return closest, distance(point, closest)
+
+
+def route_along_compound_boundary(
+    start: tuple[float, float],
+    end: tuple[float, float],
+    polygons: list[list[tuple[float, float]]],
+    max_attachment_mm: float,
+) -> list[tuple[float, float]] | None:
+    """Route between hatch ends along one outline instead of across the fill.
+
+    Hatch row ends normally land directly on an SVG boundary.  When a counter
+    blocks the straight connector, using that boundary preserves a continuous
+    thread while keeping the connector on an edge that the final hatch covers.
+    """
+    best: list[tuple[float, float]] | None = None
+    best_length: float | None = None
+    for polygon in polygons:
+        nodes = list(polygon)
+        if len(nodes) >= 2 and distance(nodes[0], nodes[-1]) <= 0.01:
+            nodes.pop()
+        if len(nodes) < 3:
+            continue
+
+        start_match: tuple[tuple[float, float], float, int] | None = None
+        end_match: tuple[tuple[float, float], float, int] | None = None
+        for index, vertex in enumerate(nodes):
+            next_vertex = nodes[(index + 1) % len(nodes)]
+            start_point, start_distance = nearest_point_on_segment(start, vertex, next_vertex)
+            end_point, end_distance = nearest_point_on_segment(end, vertex, next_vertex)
+            if start_match is None or start_distance < start_match[1]:
+                start_match = (start_point, start_distance, index)
+            if end_match is None or end_distance < end_match[1]:
+                end_match = (end_point, end_distance, index)
+        if start_match is None or end_match is None:
+            continue
+        start_point, start_distance, start_index = start_match
+        end_point, end_distance, end_index = end_match
+        if max(start_distance, end_distance) > max_attachment_mm:
+            continue
+
+        # Walk the closed outline in both directions and retain the shorter arc.
+        forward = [start, start_point]
+        index = (start_index + 1) % len(nodes)
+        while index != (end_index + 1) % len(nodes):
+            forward.append(nodes[index])
+            index = (index + 1) % len(nodes)
+        forward.extend([end_point, end])
+
+        reverse = [start, start_point]
+        index = start_index
+        target = (end_index + 1) % len(nodes)
+        while True:
+            reverse.append(nodes[index])
+            index = (index - 1) % len(nodes)
+            if index == target:
+                reverse.append(nodes[index])
+                break
+        reverse.extend([end_point, end])
+
+        for candidate in (forward, reverse):
+            candidate = dedupe_points(candidate)
+            candidate_length = sum(distance(a, b) for a, b in zip(candidate, candidate[1:]))
+            if best_length is None or candidate_length < best_length:
+                best = candidate
+                best_length = candidate_length
+    return best
+
+
 def connect_adjacent_fill_rows(
     rows: list[list[tuple[float, float]]],
     polygons: list[list[tuple[float, float]]],
@@ -395,23 +478,31 @@ def connect_fill_rows_as_island(
     polygons: list[list[tuple[float, float]]],
     max_stitch_mm: float,
     min_stitch_mm: float,
+    prefer_boundary_routes: bool = False,
 ) -> list[list[tuple[float, float]]]:
     remaining = [list(row) for row in rows if len(row) >= 2]
     if not remaining:
         return []
     connected: list[list[tuple[float, float]]] = []
     current = remaining.pop(0)
+    direct_connector_limit = max(min_stitch_mm * 3.0, 0.75)
     while remaining:
         end = current[-1]
         best: tuple[float, int, bool] | None = None
         for index, row in enumerate(remaining):
             start_distance = distance(end, row[0])
             end_distance = distance(end, row[-1])
-            if segment_inside_compound_fill(end, row[0], polygons):
+            if (
+                (not prefer_boundary_routes or start_distance <= direct_connector_limit)
+                and segment_inside_compound_fill(end, row[0], polygons)
+            ):
                 candidate = (start_distance, index, False)
                 if best is None or candidate < best:
                     best = candidate
-            if segment_inside_compound_fill(end, row[-1], polygons):
+            if (
+                (not prefer_boundary_routes or end_distance <= direct_connector_limit)
+                and segment_inside_compound_fill(end, row[-1], polygons)
+            ):
                 candidate = (end_distance, index, True)
                 if best is None or candidate < best:
                     best = candidate
@@ -419,8 +510,21 @@ def connect_fill_rows_as_island(
             # This is typically the other side of a counter. Use the hatch
             # order and find one contained detour instead of trimming each row.
             row = remaining[0]
-            forward = route_within_compound_fill(end, row[0], polygons, min_stitch_mm)
-            reverse = route_within_compound_fill(end, row[-1], polygons, min_stitch_mm)
+            attachment_limit = max(min_stitch_mm * 4.0, 1.25)
+            forward = (
+                route_along_compound_boundary(end, row[0], polygons, attachment_limit)
+                if prefer_boundary_routes
+                else None
+            )
+            reverse = (
+                route_along_compound_boundary(end, row[-1], polygons, attachment_limit)
+                if prefer_boundary_routes
+                else None
+            )
+            if forward is None:
+                forward = route_within_compound_fill(end, row[0], polygons, min_stitch_mm)
+            if reverse is None:
+                reverse = route_within_compound_fill(end, row[-1], polygons, min_stitch_mm)
             if forward is None and reverse is None:
                 connected.append(current)
                 current = remaining.pop(0)
@@ -618,6 +722,7 @@ def island_tatami_compound_fill(
     max_stitch_mm: float,
     fill_angle_deg: float,
     min_stitch_mm: float = MIN_FILL_STITCH_MM,
+    prefer_boundary_routes: bool = False,
 ) -> list[list[tuple[float, float]]]:
     polygon_list = [polygon for polygon in polygons if len(polygon) >= 3]
     if not polygon_list:
@@ -629,7 +734,13 @@ def island_tatami_compound_fill(
         fill_angle_deg,
         min_stitch_mm=min_stitch_mm,
     )
-    return connect_fill_rows_as_island(rows, polygon_list, max_stitch_mm, min_stitch_mm)
+    return connect_fill_rows_as_island(
+        rows,
+        polygon_list,
+        max_stitch_mm,
+        min_stitch_mm,
+        prefer_boundary_routes=prefer_boundary_routes,
+    )
 
 
 def outline_guided_compound_fill(
@@ -638,6 +749,7 @@ def outline_guided_compound_fill(
     max_stitch_mm: float,
     fill_angle_deg: float,
     min_stitch_mm: float = MIN_FILL_STITCH_MM,
+    prefer_boundary_routes: bool = False,
 ) -> list[list[tuple[float, float]]]:
     polygon_list = [polygon for polygon in polygons if len(polygon) >= 3]
     if not polygon_list:
@@ -649,7 +761,13 @@ def outline_guided_compound_fill(
         fill_angle_deg,
         min_stitch_mm=min_stitch_mm,
     )
-    return connect_fill_rows_as_island(rows, polygon_list, max_stitch_mm, min_stitch_mm)
+    return connect_fill_rows_as_island(
+        rows,
+        polygon_list,
+        max_stitch_mm,
+        min_stitch_mm,
+        prefer_boundary_routes=prefer_boundary_routes,
+    )
 
 
 def stitch_micro_score(
@@ -900,23 +1018,39 @@ def extract_runs(
             fill_polygons = [subpath_mm for subpath_mm in subpaths_mm if len(subpath_mm) >= 3]
             for component in compound_fill_components(fill_polygons):
                 if fill_mode == "outline_fill":
+                    if path_planning == "clean_top":
+                        for row in outline_compound_fill(
+                            component,
+                            max_stitch_mm,
+                            min_stitch_mm=min_stitch_mm,
+                        ):
+                            runs.append(StitchRun(color=color, points_mm=row))
                     fill_rows = outline_guided_compound_fill(
                         component,
                         fill_spacing_mm,
                         max_stitch_mm,
                         fill_angle_deg,
                         min_stitch_mm=min_stitch_mm,
+                        prefer_boundary_routes=path_planning == "clean_top",
                     )
                     for row in fill_rows:
                         runs.append(StitchRun(color=color, points_mm=row))
                     continue
                 if fill_mode == "island_tatami":
+                    if path_planning == "clean_top":
+                        for row in outline_compound_fill(
+                            component,
+                            max_stitch_mm,
+                            min_stitch_mm=min_stitch_mm,
+                        ):
+                            runs.append(StitchRun(color=color, points_mm=row))
                     fill_rows = island_tatami_compound_fill(
                         component,
                         fill_spacing_mm,
                         max_stitch_mm,
                         fill_angle_deg,
                         min_stitch_mm=min_stitch_mm,
+                        prefer_boundary_routes=path_planning == "clean_top",
                     )
                     for row in fill_rows:
                         runs.append(StitchRun(color=color, points_mm=row))
