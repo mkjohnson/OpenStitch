@@ -13,7 +13,12 @@ import fitz
 import pyembroidery as embroidery
 from PIL import Image, ImageChops, ImageOps
 
-from svg2brother import EMB_UNITS_PER_MM, make_thread, route_along_compound_boundary
+from svg2brother import (
+    EMB_UNITS_PER_MM,
+    island_tatami_compound_fill,
+    make_thread,
+    route_along_compound_boundary,
+)
 from thread_inventory import hex_to_rgb, load_inventory
 
 
@@ -1247,6 +1252,69 @@ def image_to_segments(
                 row_index,
             )
 
+    def stitch_component_vector_fill(block: dict, component: set[tuple[int, int]]) -> None:
+        """Trace a raster island, then fill it with the SVG-style planner."""
+        nonlocal pending_travel
+        polygons = [
+            [
+                (origin_x + col / px_per_mm, origin_y + row / px_per_mm)
+                for col, row in simplify_grid_path(loop)
+            ]
+            for loop in boundary_loops_from_active(component)
+        ]
+        polygons = [polygon for polygon in polygons if len(polygon) >= 3]
+        if not polygons:
+            return
+        min_x = min(x for polygon in polygons for x, _ in polygon)
+        max_x = max(x for polygon in polygons for x, _ in polygon)
+        min_y = min(y for polygon in polygons for _, y in polygon)
+        max_y = max(y for polygon in polygons for _, y in polygon)
+        narrowest_side = min(max_x - min_x, max_y - min_y)
+        planned_layers: list[list[list[tuple[float, float]]]] = []
+        # On broad islands, use a sparse perpendicular layer for the machine's
+        # internal travel. It supports the top fill without repeatedly sewing
+        # over the same visible needle points.
+        if narrowest_side >= max(1.2, fill_spacing_mm * 3.0):
+            planned_layers.append(
+                island_tatami_compound_fill(
+                    polygons,
+                    max(1.2, fill_spacing_mm * 3.0),
+                    max_stitch_mm,
+                    fill_angle_deg + 90.0,
+                    min_stitch_mm=min_run_mm,
+                    prefer_boundary_routes=False,
+                    allow_boundary_routes=True,
+                    allow_interior_routes=True,
+                )
+            )
+        planned_layers.append(
+            island_tatami_compound_fill(
+                polygons,
+                fill_spacing_mm,
+                max_stitch_mm,
+                fill_angle_deg,
+                min_stitch_mm=min_run_mm,
+                prefer_boundary_routes=path_planning == "clean_top",
+                allow_boundary_routes=True,
+                allow_interior_routes=path_planning != "clean_top",
+            )
+        )
+        row_index = 0
+        for runs in planned_layers:
+            for points in runs:
+                if len(points) < 2:
+                    continue
+                # Each planned island route is already continuous. Separate
+                # routes restart with one deliberate trim, never a pixel-row
+                # bridge through a counter or across the top stitches.
+                if previous_point is not None and math.hypot(
+                    previous_point[0] - points[0][0], previous_point[1] - points[0][1]
+                ) > 0.001:
+                    pending_travel = "travel_after_trim"
+                for start, end in zip(points, points[1:]):
+                    append_run(block, start[0], start[1], end[0], end[1], row_index)
+                row_index += 1
+
     def component_source_image(component: set[tuple[int, int]], palette_index: int) -> Image.Image:
         """Keep one connected island while retaining holes as background pixels."""
         isolated = palette_image.copy()
@@ -1394,7 +1462,6 @@ def image_to_segments(
                 if pixels[col, row] == palette_index
             }
             components = stitchable_components(active, palette_image.width, palette_image.height)
-            selected_angle = best_raster_angle(palette_index)
             remaining_components = components
             while remaining_components:
                 if previous_point is None:
@@ -1410,18 +1477,10 @@ def image_to_segments(
                         ),
                 )
                 component = remaining_components.pop(component_index)
-                if abs(selected_angle) <= 0.001:
-                    # The side-aware component planner keeps the normal 0 deg
-                    # mixed fill continuous around counters without retracing
-                    # an outline for every scan row.
-                    stitch_component_scan_fill(block, component)
-                else:
-                    stitch_scan_fill(
-                        block,
-                        palette_index,
-                        [selected_angle],
-                        source_image=component_source_image(component, palette_index),
-                    )
+                # Trace each color island first, then use the same geometry-aware
+                # fill planner as an SVG. This avoids turning PNG artwork into a
+                # dot-matrix grid of pixel scan rows.
+                stitch_component_vector_fill(block, component)
                 if remaining_components:
                     pending_travel = "travel_after_trim"
         else:
