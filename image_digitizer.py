@@ -1404,18 +1404,50 @@ def image_to_segments(
                             previous_point[1]
                             - (origin_y + component_centroid(remaining_components[index])[1] / px_per_mm),
                         ),
-                    )
-                component = remaining_components.pop(component_index)
-                stitch_scan_fill(
-                    block,
-                    palette_index,
-                    [selected_angle],
-                    source_image=component_source_image(component, palette_index),
                 )
+                component = remaining_components.pop(component_index)
+                if abs(selected_angle) <= 0.001:
+                    # The side-aware component planner keeps the normal 0 deg
+                    # mixed fill continuous around counters without retracing
+                    # an outline for every scan row.
+                    stitch_component_scan_fill(block, component)
+                else:
+                    stitch_scan_fill(
+                        block,
+                        palette_index,
+                        [selected_angle],
+                        source_image=component_source_image(component, palette_index),
+                    )
                 if remaining_components:
                     pending_travel = "travel_after_trim"
         else:
-            stitch_scan_fill(block, palette_index, stitch_angles)
+            if len(stitch_angles) == 1 and abs(stitch_angles[0]) <= 0.001:
+                pixels = palette_image.load()
+                active = {
+                    (col, row)
+                    for row in range(palette_image.height)
+                    for col in range(palette_image.width)
+                    if pixels[col, row] == palette_index
+                }
+                remaining_components = stitchable_components(active, palette_image.width, palette_image.height)
+                while remaining_components:
+                    if previous_point is None:
+                        component_index = 0
+                    else:
+                        component_index = min(
+                            range(len(remaining_components)),
+                            key=lambda index: math.hypot(
+                                previous_point[0]
+                                - (origin_x + component_centroid(remaining_components[index])[0] / px_per_mm),
+                                previous_point[1]
+                                - (origin_y + component_centroid(remaining_components[index])[1] / px_per_mm),
+                            ),
+                        )
+                    stitch_component_scan_fill(block, remaining_components.pop(component_index))
+                    if remaining_components:
+                        pending_travel = "travel_after_trim"
+            else:
+                stitch_scan_fill(block, palette_index, stitch_angles)
 
     if not segments:
         raise ValueError("No stitchable image regions were found.")
