@@ -246,6 +246,7 @@ class StitchCanvas(QWidget):
         self.background_color = "#fbfcfa"
         self.measurement_units = "metric"
         self.visible_blocks: set[int] | None = None
+        self.thread_coverage_mm = 0.43
         self.realistic_preview: QPixmap | None = None
         self._drag_start: QPoint | None = None
         self._drag_pan = QPointF(0, 0)
@@ -291,6 +292,10 @@ class StitchCanvas(QWidget):
 
     def set_measurement_units(self, units: str) -> None:
         self.measurement_units = "sae" if units == "sae" else "metric"
+        self.update()
+
+    def set_thread_coverage_width(self, width_mm: float) -> None:
+        self.thread_coverage_mm = max(0.12, min(0.9, float(width_mm)))
         self.update()
 
     def set_edit_mode(self, enabled: bool) -> None:
@@ -462,7 +467,10 @@ class StitchCanvas(QWidget):
 
     def _draw_segments(self, painter: QPainter) -> None:
         scale, _, _ = self._transform()
-        stitch_width = max(1, min(3, int(round(scale * 0.08))))
+        # The technical line must reflect flattened thread coverage rather
+        # than a one-pixel vector path, otherwise valid 40 wt fills appear to
+        # have fabric gaps between their rows.
+        stitch_width = max(1.0, min(12.0, scale * self.thread_coverage_mm))
         for segment in self.segments:
             if segment.get("step", 0) > self.current_step:
                 continue
@@ -1888,6 +1896,9 @@ class OpenStitchWindow(QMainWindow):
             counts=counts,
             bounds=bounds,
         )
+        self.canvas.set_thread_coverage_width(
+            thread_diameter_mm(str(settings.get("thread_weight", DEFAULT_THREAD_WEIGHT))) * 2.15
+        )
         if reset_view:
             self.canvas.set_design(segments, commands, bounds)
         else:
@@ -2223,6 +2234,9 @@ class OpenStitchWindow(QMainWindow):
             color_blocks=new_blocks,
             counts=counts,
             bounds=bounds,
+        )
+        self.canvas.set_thread_coverage_width(
+            thread_diameter_mm(str(state_settings.get("thread_weight", DEFAULT_THREAD_WEIGHT))) * 2.15
         )
         zoom = self.canvas.zoom
         pan = QPointF(self.canvas.pan)
