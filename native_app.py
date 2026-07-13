@@ -8,8 +8,10 @@ import io
 import json
 import math
 import os
+import queue
 import shutil
 import sys
+import threading
 import uuid
 import zipfile
 from dataclasses import dataclass
@@ -754,6 +756,12 @@ class OpenStitchWindow(QMainWindow):
         self.refresh_timer.setSingleShot(True)
         self.refresh_timer.setInterval(350)
         self.refresh_timer.timeout.connect(self.refresh_current_design)
+        self._conversion_results: queue.SimpleQueue = queue.SimpleQueue()
+        self._conversion_thread: threading.Thread | None = None
+        self._queued_conversion: tuple[Path, dict, bool, bool] | None = None
+        self._conversion_timer = QTimer(self)
+        self._conversion_timer.setInterval(75)
+        self._conversion_timer.timeout.connect(self._poll_conversion)
         self.catalog = load_thread_catalog()
         self._build_ui()
         self._connect_setting_refresh()
@@ -1826,6 +1834,12 @@ class OpenStitchWindow(QMainWindow):
         reset_view: bool = True,
         write_outputs: bool = True,
     ) -> None:
+        if self._conversion_thread is not None and self._conversion_thread.is_alive():
+            # Settings often change in a short burst. Keep only the newest
+            # request and let the current worker finish without freezing Qt.
+            self._queued_conversion = (source_path, dict(settings), reset_view, write_outputs)
+            self.stats_label.setText("Finishing current stitch calculation...")
+            return
         OUTPUT_DIR.mkdir(exist_ok=True)
         previous_blocks = {
             block["index"]: {
@@ -1840,7 +1854,59 @@ class OpenStitchWindow(QMainWindow):
             job_id = uuid.uuid4().hex[:10]
             working_source = OUTPUT_DIR / f"{Path(name).stem}_{job_id}{Path(name).suffix.lower()}"
             shutil.copy2(source_path, working_source)
-        segments, commands, blocks, counts = self.collect_design(working_source, settings)
+        context = {
+            "source_path": source_path,
+            "working_source": working_source,
+            "settings": dict(settings),
+            "reset_view": reset_view,
+            "write_outputs": write_outputs,
+            "previous_blocks": previous_blocks,
+        }
+        self.stats_label.setText("Calculating stitch paths...")
+        self.color_preview_label.setText("Calculating color blocks...")
+        self._conversion_thread = threading.Thread(
+            target=self._collect_design_worker,
+            args=(context,),
+            daemon=True,
+        )
+        self._conversion_thread.start()
+        self._conversion_timer.start()
+
+    def _collect_design_worker(self, context: dict) -> None:
+        try:
+            result = self.collect_design(context["working_source"], context["settings"])
+            self._conversion_results.put((context, result, None))
+        except Exception as error:
+            self._conversion_results.put((context, None, str(error)))
+
+    def _poll_conversion(self) -> None:
+        try:
+            context, result, error = self._conversion_results.get_nowait()
+        except queue.Empty:
+            return
+        self._conversion_timer.stop()
+        self._conversion_thread = None
+        if error is not None:
+            QMessageBox.critical(self, "OpenStitch", error)
+        elif result is not None:
+            self._finish_conversion(context, result)
+        queued = self._queued_conversion
+        self._queued_conversion = None
+        if queued is not None:
+            self.convert_path(*queued)
+
+    def _finish_conversion(
+        self,
+        context: dict,
+        result: tuple[list[dict], list[dict], list[dict], dict],
+    ) -> None:
+        source_path = context["source_path"]
+        working_source = context["working_source"]
+        settings = context["settings"]
+        reset_view = context["reset_view"]
+        write_outputs = context["write_outputs"]
+        previous_blocks = context["previous_blocks"]
+        segments, commands, blocks, counts = result
         if previous_blocks and settings.get("_preserve_block_filter"):
             kept_blocks = set(previous_blocks)
             segments = [segment for segment in segments if segment["blockIndex"] in kept_blocks]

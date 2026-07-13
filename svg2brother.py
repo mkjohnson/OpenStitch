@@ -304,15 +304,39 @@ def segment_inside_compound_fill(
     polygons: list[list[tuple[float, float]]],
     samples: int = 5,
 ) -> bool:
-    # A fixed handful of probes can jump over a narrow counter in a glyph
-    # (for example, the opening in an "e") and incorrectly approve a sewn
-    # connector. Check at 0.10 mm intervals at minimum, which is finer than
-    # the stitch planner's detail threshold.
-    probe_count = max(samples, int(math.ceil(distance(start, end) / 0.10)))
-    for index in range(1, probe_count + 1):
-        t = index / (probe_count + 1)
-        point = (start[0] + (end[0] - start[0]) * t, start[1] + (end[1] - start[1]) * t)
-        if not point_in_compound_fill(point, polygons):
+    # Fixed probes alone can jump over a narrow counter in a glyph (such as
+    # the opening in an "e"). First reject any connector that crosses a fill
+    # boundary, then use a few probes to validate its remaining interior.
+    dx = end[0] - start[0]
+    dy = end[1] - start[1]
+    crossing_parameters: set[float] = set()
+    for polygon in polygons:
+        for edge_start, edge_end in zip(polygon, polygon[1:]):
+            edge_dx = edge_end[0] - edge_start[0]
+            edge_dy = edge_end[1] - edge_start[1]
+            denominator = (dx * edge_dy) - (dy * edge_dx)
+            if abs(denominator) <= 1e-9:
+                continue
+            offset_x = edge_start[0] - start[0]
+            offset_y = edge_start[1] - start[1]
+            along_segment = ((offset_x * edge_dy) - (offset_y * edge_dx)) / denominator
+            along_edge = ((offset_x * dy) - (offset_y * dx)) / denominator
+            if 1e-6 < along_segment < 1.0 - 1e-6 and -1e-6 <= along_edge <= 1.0 + 1e-6:
+                crossing_parameters.add(round(along_segment, 9))
+
+    # A true crossing changes inside/outside state. A tangent touch at a
+    # corner does not, and should remain available to boundary routing.
+    for crossing in crossing_parameters:
+        delta = min(1e-4, crossing / 2, (1.0 - crossing) / 2)
+        before = (start[0] + dx * (crossing - delta), start[1] + dy * (crossing - delta))
+        after = (start[0] + dx * (crossing + delta), start[1] + dy * (crossing + delta))
+        if point_in_compound_fill(before, polygons) != point_in_compound_fill(after, polygons):
+            return False
+
+    for index in range(1, samples + 1):
+        t = index / (samples + 1)
+        probe = (start[0] + dx * t, start[1] + dy * t)
+        if not point_in_compound_fill(probe, polygons):
             return False
     return True
 
