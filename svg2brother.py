@@ -1036,6 +1036,7 @@ def extract_runs(
     fill_mode: str = "tatami",
     path_planning: str = "min_cuts",
     min_stitch_mm: float = MIN_FILL_STITCH_MM,
+    fill_underlay: bool = False,
 ) -> list[StitchRun]:
     svg = SVG.parse(str(svg_file), reify=True)
     sample_step_px = sample_step_mm * SVG_PX_PER_MM
@@ -1079,13 +1080,41 @@ def extract_runs(
                 component_id = next_component_id
                 next_component_id += 1
                 if fill_mode == "outline_fill":
+                    if fill_underlay:
+                        # A sparse perpendicular underlay closes fabric gaps
+                        # while leaving the final hatch free to be a clean,
+                        # single-direction top layer.
+                        underlay_rows = optimized_hatch_compound_fill(
+                            component,
+                            max(fill_spacing_mm * 2.0, 0.65),
+                            max_stitch_mm,
+                            fill_angle_deg + 90.0,
+                            min_stitch_mm=min_stitch_mm,
+                        )
+                        underlay_runs = connect_fill_rows_as_island(
+                            underlay_rows,
+                            component,
+                            max_stitch_mm,
+                            min_stitch_mm,
+                            allow_boundary_routes=True,
+                            allow_interior_routes=True,
+                        )
+                        for row in underlay_runs:
+                            runs.append(StitchRun(color=color, points_mm=row, component_id=component_id, phase=0))
                     if path_planning == "clean_top":
                         for row in outline_compound_fill(
                             component,
                             max_stitch_mm,
                             min_stitch_mm=min_stitch_mm,
                         ):
-                            runs.append(StitchRun(color=color, points_mm=row, component_id=component_id, phase=0))
+                            runs.append(
+                                StitchRun(
+                                    color=color,
+                                    points_mm=row,
+                                    component_id=component_id,
+                                    phase=1 if fill_underlay else 0,
+                                )
+                            )
                     fill_rows = outline_guided_compound_fill(
                         component,
                         fill_spacing_mm,
@@ -1097,7 +1126,14 @@ def extract_runs(
                         allow_interior_routes=path_planning != "clean_top",
                     )
                     for row in fill_rows:
-                        runs.append(StitchRun(color=color, points_mm=row, component_id=component_id))
+                        runs.append(
+                            StitchRun(
+                                color=color,
+                                points_mm=row,
+                                component_id=component_id,
+                                phase=2 if fill_underlay else 1,
+                            )
+                        )
                     continue
                 if fill_mode == "island_tatami":
                     if path_planning == "clean_top":
@@ -1243,6 +1279,7 @@ def extract_runs_for_final_size(
     fill_mode: str = "tatami",
     path_planning: str = "min_cuts",
     min_stitch_mm: float = MIN_FILL_STITCH_MM,
+    fill_underlay: bool = False,
 ) -> list[StitchRun]:
     runs = extract_runs(
         svg_file,
@@ -1253,6 +1290,7 @@ def extract_runs_for_final_size(
         fill_mode=fill_mode,
         path_planning=path_planning,
         min_stitch_mm=min_stitch_mm,
+        fill_underlay=fill_underlay,
     )
     min_x, min_y, max_x, max_y = bounds(runs)
     width = max(max_x - min_x, 0.001)
@@ -1275,6 +1313,7 @@ def extract_runs_for_final_size(
             fill_mode=fill_mode,
             path_planning=path_planning,
             min_stitch_mm=max(min_stitch_mm / scale, 0.01),
+            fill_underlay=fill_underlay,
         )
     return transform_runs(
         runs,

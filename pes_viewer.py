@@ -3204,6 +3204,7 @@ def collect_svg_segments(
     center: bool,
     path_planning: str = "min_cuts",
     min_stitch_mm: float = 0.3,
+    fill_underlay: bool = False,
 ) -> tuple[list[dict], list[dict], list[dict], dict]:
     runs = extract_runs_for_final_size(
         svg_file,
@@ -3214,6 +3215,7 @@ def collect_svg_segments(
         fill_mode=fill_mode,
         path_planning=path_planning,
         min_stitch_mm=min_stitch_mm,
+        fill_underlay=fill_underlay,
         fit_width_mm=fit_width_mm,
         fit_height_mm=fit_height_mm,
         center=center,

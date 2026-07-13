@@ -1142,6 +1142,11 @@ class OpenStitchWindow(QMainWindow):
         self.min_stitch.setValue(0.30)
         self.min_stitch.setSuffix(" mm")
         self.min_stitch.setToolTip("Shortest generated stitch/run. Higher values reduce micro-stitches but can remove fine detail.")
+        self.fill_underlay = QCheckBox("Add light perpendicular underlay")
+        self.fill_underlay.setChecked(True)
+        self.fill_underlay.setToolTip(
+            "Stitch a sparse layer beneath Outline Fill before the clean visible top stitches."
+        )
         self.stitch_perimeter = QCheckBox("Stitch perimeter of each color block")
         self.perimeter_offset = QDoubleSpinBox()
         self.perimeter_offset.setRange(0.0, 1.5)
@@ -1179,6 +1184,7 @@ class OpenStitchWindow(QMainWindow):
         form.addRow("Fill spacing", self.fill_spacing)
         form.addRow("Max stitch", self.max_stitch)
         form.addRow("Min stitch", self.min_stitch)
+        form.addRow("", self.fill_underlay)
         form.addRow("", self.stitch_perimeter)
         form.addRow("Perimeter offset", self.perimeter_offset)
         form.addRow("Perimeter passes", self.perimeter_passes)
@@ -1260,6 +1266,7 @@ class OpenStitchWindow(QMainWindow):
         ]:
             widget.valueChanged.connect(self.schedule_refresh)
         self.perimeter_passes.valueChanged.connect(self.schedule_refresh)
+        self.fill_underlay.stateChanged.connect(self.schedule_refresh)
         self.stitch_perimeter.stateChanged.connect(self.toggle_perimeter_preview)
         self.max_colors.valueChanged.connect(self.schedule_refresh)
         self.pdf_page.valueChanged.connect(self.schedule_refresh)
@@ -1521,6 +1528,7 @@ class OpenStitchWindow(QMainWindow):
             path_planning=str(self.path_planning.currentData() or "min_cuts") if hasattr(self, "path_planning") else "min_cuts",
         )
         settings["thread_brand"] = self.selected_thread_brand()
+        settings["fill_underlay"] = self.fill_underlay.isChecked() if hasattr(self, "fill_underlay") else True
         if self.state is not None and self.state.settings.get("_preserve_block_filter"):
             settings["_preserve_block_filter"] = True
         return settings
@@ -1558,6 +1566,8 @@ class OpenStitchWindow(QMainWindow):
             self.set_length_control_value(self.max_stitch, float(settings.get("max_stitch_mm", self.length_control_mm(self.max_stitch))))
             if hasattr(self, "min_stitch"):
                 self.set_length_control_value(self.min_stitch, float(settings.get("min_stitch_mm", self.length_control_mm(self.min_stitch))))
+            if hasattr(self, "fill_underlay"):
+                self.fill_underlay.setChecked(bool(settings.get("fill_underlay", True)))
             mode = str(settings.get("fill_mode", self.fill_mode.currentText()))
             index = self.fill_mode.findText(mode)
             if index >= 0:
@@ -1928,6 +1938,7 @@ class OpenStitchWindow(QMainWindow):
                 fill_angle_deg=float(settings["fill_angle_deg"]),
                 fill_mode=str(settings["fill_mode"]),
                 path_planning=str(settings.get("path_planning", "min_cuts")),
+                fill_underlay=bool(settings.get("fill_underlay", True)),
                 fit_width_mm=settings.get("fit_width_mm"),
                 fit_height_mm=None,
                 center=True,
