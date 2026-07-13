@@ -686,6 +686,7 @@ def clean_run_points(
     lock_stitch_mm: float = 1.0,
     min_run_length_mm: float = 1.0,
     include_start_lock: bool = True,
+    include_end_lock: bool = True,
 ) -> list[tuple[float, float]]:
     if len(points) < 2:
         return points
@@ -728,7 +729,7 @@ def clean_run_points(
         if start_lock is not None:
             split_points = [first, start_lock, first, start_lock, *split_points[1:]]
 
-    if len(split_points) >= 2:
+    if include_end_lock and len(split_points) >= 2:
         last = split_points[-1]
         before_last = split_points[-2]
         end_lock = lock_point(last, before_last)
@@ -3634,6 +3635,7 @@ def write_segments_as_pes(
     active_block: int | None = None
     previous_point: tuple[float, float] | None = None
     written_blocks: list[dict] = []
+    tied_blocks: set[int] = set()
     if stitch_perimeter:
         segments = add_perimeter_segments(
             segments,
@@ -3676,6 +3678,7 @@ def write_segments_as_pes(
             lock_stitch_mm=lock_stitch_mm,
             min_run_length_mm=min(min_run_length_mm, 0.30) if is_perimeter else min_run_length_mm,
             include_start_lock=False,
+            include_end_lock=False,
         )
         if len(clean_points) < 2:
             return
@@ -3690,7 +3693,10 @@ def write_segments_as_pes(
         ensure_active_block(block_index)
         start_units = rounded_points[0]
         current_units: tuple[int, int] | None = None
-        start_needs_tie_in = old_active_block != block_index or previous_point is None
+        # A dense fill can contain many intentionally separate rows. Tying
+        # every row creates visible five-point knots across the design; tie
+        # once when this color is first introduced instead.
+        start_needs_tie_in = block_index not in tied_blocks
 
         def emit_tie_in() -> None:
             nonlocal current_units
@@ -3716,7 +3722,6 @@ def write_segments_as_pes(
                 current_units = tie_point
 
         if previous_point is None or to_embroidery_units(previous_point) != start_units:
-            start_needs_tie_in = True
             target_point = (start_units[0] / EMB_UNITS_PER_MM, start_units[1] / EMB_UNITS_PER_MM)
             if (
                 connect_short_gaps
@@ -3747,6 +3752,7 @@ def write_segments_as_pes(
             current_units = start_units
         if start_needs_tie_in and current_units == start_units:
             emit_tie_in()
+            tied_blocks.add(block_index)
         for x, y in rounded_points[1:]:
             if current_units == (x, y):
                 continue
@@ -3817,8 +3823,11 @@ def write_segments_as_pes(
         str(output_file),
         max_jump=int(5.0 * EMB_UNITS_PER_MM),
         full_jump=True,
-        tie_on=True,
-        tie_off=True,
+        # OpenStitch writes its own deliberate tie-ins. Letting the writer add
+        # another automatic tie sequence at every trim produces stray visible
+        # stitches and makes the exported sequence diverge from the preview.
+        tie_on=False,
+        tie_off=False,
     )
     return written_blocks
 
