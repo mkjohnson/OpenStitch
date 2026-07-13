@@ -543,34 +543,48 @@ def connect_fill_rows_as_island(
                 if best is None or candidate < best:
                     best = candidate
         if best is None:
-            # This is typically the other side of a counter. Use the hatch
-            # order and find one contained detour instead of trimming each row.
-            row = remaining[0]
+            # A counter split the hatch rows. Consider every remaining row,
+            # not merely the next scanline: a sewing machine can approach the
+            # next stitch from any direction, so the shortest contained route
+            # is usually around the nearby side of the counter.
             attachment_limit = max(min_stitch_mm * 4.0, 1.25)
-            forward = (
-                route_along_compound_boundary(end, row[0], polygons, attachment_limit)
-                if prefer_boundary_routes and allow_boundary_routes
-                else None
-            )
-            reverse = (
-                route_along_compound_boundary(end, row[-1], polygons, attachment_limit)
-                if prefer_boundary_routes and allow_boundary_routes
-                else None
-            )
-            if forward is None and allow_interior_routes:
-                forward = route_within_compound_fill(end, row[0], polygons, min_stitch_mm)
-            if reverse is None and allow_interior_routes:
-                reverse = route_within_compound_fill(end, row[-1], polygons, min_stitch_mm)
-            if forward is None and reverse is None:
+            detour_options: list[tuple[float, int, bool, list[tuple[float, float]]]] = []
+            for index, candidate_row in enumerate(remaining):
+                for reverse, target in ((False, candidate_row[0]), (True, candidate_row[-1])):
+                    route = (
+                        route_along_compound_boundary(end, target, polygons, attachment_limit)
+                        if allow_boundary_routes
+                        else None
+                    )
+                    if route is None and allow_interior_routes:
+                        route = route_within_compound_fill(end, target, polygons, min_stitch_mm)
+                    if route is None:
+                        continue
+                    route_length = sum(distance(a, b) for a, b in zip(route, route[1:]))
+                    detour_options.append((route_length, index, reverse, route))
+
+            if not detour_options:
+                # No safe thread path exists inside this component. Keep it as
+                # a separate run so the writer makes one deliberate trim.
                 connected.append(current)
-                current = remaining.pop(0)
+                nearest_index, nearest_reverse = min(
+                    (
+                        (index, distance(end, row[-1]) < distance(end, row[0]))
+                        for index, row in enumerate(remaining)
+                    ),
+                    key=lambda candidate: min(
+                        distance(end, remaining[candidate[0]][0]),
+                        distance(end, remaining[candidate[0]][-1]),
+                    ),
+                )
+                current = remaining.pop(nearest_index)
+                if nearest_reverse:
+                    current.reverse()
                 continue
-            if reverse is not None and (forward is None or len(reverse) < len(forward)):
-                row = list(reversed(remaining.pop(0)))
-                connector_points = reverse
-            else:
-                row = remaining.pop(0)
-                connector_points = forward or [end, row[0]]
+            _, best_index, best_reverse, connector_points = min(detour_options, key=lambda candidate: candidate[0])
+            row = remaining.pop(best_index)
+            if best_reverse:
+                row.reverse()
         else:
             _, best_index, best_reverse = best
             row = remaining.pop(best_index)
@@ -1079,7 +1093,7 @@ def extract_runs(
                         fill_angle_deg,
                         min_stitch_mm=min_stitch_mm,
                         prefer_boundary_routes=path_planning == "clean_top",
-                        allow_boundary_routes=path_planning != "clean_top",
+                        allow_boundary_routes=True,
                         allow_interior_routes=path_planning != "clean_top",
                     )
                     for row in fill_rows:
@@ -1100,7 +1114,7 @@ def extract_runs(
                         fill_angle_deg,
                         min_stitch_mm=min_stitch_mm,
                         prefer_boundary_routes=path_planning == "clean_top",
-                        allow_boundary_routes=path_planning != "clean_top",
+                        allow_boundary_routes=True,
                         allow_interior_routes=path_planning != "clean_top",
                     )
                     for row in fill_rows:
@@ -1281,7 +1295,6 @@ def write_embroidery(runs: list[StitchRun], output: Path) -> None:
     pattern = EmbPattern()
     active_color: str | None = None
     previous_point: tuple[float, float] | None = None
-    trim_gap_mm = 0.75
 
     for run in runs:
         if len(run.points_mm) < 2:
@@ -1293,7 +1306,9 @@ def write_embroidery(runs: list[StitchRun], output: Path) -> None:
             active_color = run.color
 
         first_x, first_y = run.points_mm[0]
-        if previous_point is not None and distance(previous_point, (first_x, first_y)) > trim_gap_mm:
+        # Runs are separated only when no stitchable route through the filled
+        # area exists. Never carry thread across that gap without a trim.
+        if previous_point is not None and distance(previous_point, (first_x, first_y)) > 0.001:
             pattern.trim()
         pattern.add_stitch_absolute(
             embroidery.JUMP,
