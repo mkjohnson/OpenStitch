@@ -759,6 +759,8 @@ class OpenStitchWindow(QMainWindow):
         self._conversion_results: queue.SimpleQueue = queue.SimpleQueue()
         self._conversion_thread: threading.Thread | None = None
         self._queued_conversion: tuple[Path, dict, bool, bool] | None = None
+        self._workspace_revision = 0
+        self._settings_dirty = False
         self._conversion_timer = QTimer(self)
         self._conversion_timer.setInterval(75)
         self._conversion_timer.timeout.connect(self._poll_conversion)
@@ -850,6 +852,9 @@ class OpenStitchWindow(QMainWindow):
         open_action = QAction("Open Design...", self)
         open_action.triggered.connect(self.open_design)
         file_menu.addAction(open_action)
+        clear_workspace = QAction("Clear Workspace", self)
+        clear_workspace.triggered.connect(self.clear_workspace)
+        file_menu.addAction(clear_workspace)
         self.recent_files_menu = file_menu.addMenu("Recent Files")
         self.recent_files_menu.aboutToShow.connect(self.populate_recent_files_menu)
         save_pes = QAction("Save PES As...", self)
@@ -1203,9 +1208,10 @@ class OpenStitchWindow(QMainWindow):
         form.addRow("Color flattening", self.color_merge)
         form.addRow("PDF page", self.pdf_page)
         layout.addLayout(form)
-        apply_settings = QPushButton("Apply Settings")
-        apply_settings.clicked.connect(self.apply_current_settings)
-        layout.addWidget(apply_settings)
+        self.apply_settings_button = QPushButton("Apply Changes")
+        self.apply_settings_button.setEnabled(False)
+        self.apply_settings_button.clicked.connect(self.apply_current_settings)
+        layout.addWidget(self.apply_settings_button)
         self.color_preview_label = QLabel("No color blocks yet.")
         self.color_preview_label.setWordWrap(True)
         self.color_preview_label.setTextFormat(Qt.RichText)
@@ -1275,7 +1281,7 @@ class OpenStitchWindow(QMainWindow):
             widget.valueChanged.connect(self.schedule_refresh)
         self.perimeter_passes.valueChanged.connect(self.schedule_refresh)
         self.fill_underlay.stateChanged.connect(self.schedule_refresh)
-        self.stitch_perimeter.stateChanged.connect(self.toggle_perimeter_preview)
+        self.stitch_perimeter.stateChanged.connect(self.schedule_refresh)
         self.max_colors.valueChanged.connect(self.schedule_refresh)
         self.pdf_page.valueChanged.connect(self.schedule_refresh)
         self.fill_mode.currentTextChanged.connect(self.schedule_refresh)
@@ -1608,28 +1614,13 @@ class OpenStitchWindow(QMainWindow):
     def schedule_refresh(self, *args) -> None:
         if self._loading_settings or self.state is None:
             return
-        self.stats_label.setText("Updating stitches...")
-        self.color_preview_label.setText("Updating colors...")
-        self.refresh_timer.start()
+        self._settings_dirty = True
+        self.apply_settings_button.setEnabled(True)
+        self.stats_label.setText("Project settings changed. Select Apply Changes to recalculate stitches.")
+        self.color_preview_label.setText("Pending settings have not been applied to this design.")
 
     def toggle_perimeter_preview(self, *args) -> None:
-        if self._loading_settings or self.state is None:
-            return
-        self.state.settings["stitch_perimeter"] = self.stitch_perimeter.isChecked()
-        base_segments = [segment for segment in self.state.segments if not segment.get("perimeter")]
-        if self.stitch_perimeter.isChecked():
-            self.state.segments = add_perimeter_segments(
-                base_segments,
-                self.state.color_blocks,
-                max_stitch_mm=float(self.state.settings["max_stitch_mm"]),
-                offset_mm=float(self.state.settings.get("perimeter_offset_mm", 0.24)),
-                passes=int(self.state.settings.get("perimeter_passes", 1)),
-            )
-        else:
-            self.state.segments = base_segments
-            self.recount_block_stitches()
-        self.recompute_state_after_manual_edit()
-        self.set_baseline_snapshot()
+        self.schedule_refresh()
 
     def apply_safer_density(self) -> None:
         self._loading_settings = True
@@ -1750,6 +1741,9 @@ class OpenStitchWindow(QMainWindow):
         if self.state is None:
             QMessageBox.information(self, "OpenStitch", "Open a design first.")
             return
+        self._settings_dirty = False
+        self.apply_settings_button.setEnabled(False)
+        self.apply_settings_button.setText("Applying Changes...")
         try:
             self.convert_path(
                 self.state.working_source,
@@ -1758,7 +1752,40 @@ class OpenStitchWindow(QMainWindow):
                 write_outputs=False,
             )
         except Exception as error:
+            self._settings_dirty = True
+            self.apply_settings_button.setEnabled(True)
+            self.apply_settings_button.setText("Apply Changes")
             QMessageBox.critical(self, "OpenStitch", str(error))
+
+    def clear_workspace(self) -> None:
+        """Clear only the open design; library files and thread inventory remain."""
+        self._workspace_revision += 1
+        self._queued_conversion = None
+        self.refresh_timer.stop()
+        self.play_timer.stop()
+        self.state = None
+        self.baseline_snapshot = None
+        self.undo_stack.clear()
+        self.canvas.set_realistic_preview(None)
+        self.canvas.set_design([], [], (-10.0, -10.0, 10.0, 10.0))
+        self.canvas.set_visible_blocks(None)
+        self.step_slider.setRange(0, 0)
+        self.step_slider.setValue(0)
+        self.thread_rows = []
+        while self.thread_layout.count() > 1:
+            item = self.thread_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        self.stats_label.setText("No design loaded.")
+        self.color_preview_label.setText("No color blocks yet.")
+        self.shopping_label.setText("")
+        self._settings_dirty = False
+        self.apply_settings_button.setEnabled(False)
+        self.apply_settings_button.setText("Apply Changes")
+        if self.realistic_preview_toggle.isChecked():
+            self.realistic_preview_toggle.blockSignals(True)
+            self.realistic_preview_toggle.setChecked(False)
+            self.realistic_preview_toggle.blockSignals(False)
 
     def open_design(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
@@ -1861,6 +1888,7 @@ class OpenStitchWindow(QMainWindow):
             "reset_view": reset_view,
             "write_outputs": write_outputs,
             "previous_blocks": previous_blocks,
+            "workspace_revision": self._workspace_revision,
         }
         self.stats_label.setText("Calculating stitch paths...")
         self.color_preview_label.setText("Calculating color blocks...")
@@ -1886,7 +1914,12 @@ class OpenStitchWindow(QMainWindow):
             return
         self._conversion_timer.stop()
         self._conversion_thread = None
-        if error is not None:
+        if context.get("workspace_revision") != self._workspace_revision:
+            pass
+        elif error is not None:
+            self._settings_dirty = True
+            self.apply_settings_button.setEnabled(self.state is not None)
+            self.apply_settings_button.setText("Apply Changes")
             QMessageBox.critical(self, "OpenStitch", error)
         elif result is not None:
             self._finish_conversion(context, result)
@@ -1991,6 +2024,9 @@ class OpenStitchWindow(QMainWindow):
         self.update_color_block_preview()
         self.refresh_library()
         self.set_baseline_snapshot()
+        self._settings_dirty = self.current_settings() != settings
+        self.apply_settings_button.setEnabled(self._settings_dirty)
+        self.apply_settings_button.setText("Apply Changes")
 
     def collect_design(self, path: Path, settings: dict) -> tuple[list[dict], list[dict], list[dict], dict]:
         suffix = path.suffix.lower()
