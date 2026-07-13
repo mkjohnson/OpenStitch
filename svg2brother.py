@@ -304,8 +304,13 @@ def segment_inside_compound_fill(
     polygons: list[list[tuple[float, float]]],
     samples: int = 5,
 ) -> bool:
-    for index in range(1, samples + 1):
-        t = index / (samples + 1)
+    # A fixed handful of probes can jump over a narrow counter in a glyph
+    # (for example, the opening in an "e") and incorrectly approve a sewn
+    # connector. Check at 0.10 mm intervals at minimum, which is finer than
+    # the stitch planner's detail threshold.
+    probe_count = max(samples, int(math.ceil(distance(start, end) / 0.10)))
+    for index in range(1, probe_count + 1):
+        t = index / (probe_count + 1)
         point = (start[0] + (end[0] - start[0]) * t, start[1] + (end[1] - start[1]) * t)
         if not point_in_compound_fill(point, polygons):
             return False
