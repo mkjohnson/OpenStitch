@@ -479,6 +479,8 @@ def connect_fill_rows_as_island(
     max_stitch_mm: float,
     min_stitch_mm: float,
     prefer_boundary_routes: bool = False,
+    allow_boundary_routes: bool = True,
+    allow_interior_routes: bool = True,
 ) -> list[list[tuple[float, float]]]:
     remaining = [list(row) for row in rows if len(row) >= 2]
     if not remaining:
@@ -513,17 +515,17 @@ def connect_fill_rows_as_island(
             attachment_limit = max(min_stitch_mm * 4.0, 1.25)
             forward = (
                 route_along_compound_boundary(end, row[0], polygons, attachment_limit)
-                if prefer_boundary_routes
+                if prefer_boundary_routes and allow_boundary_routes
                 else None
             )
             reverse = (
                 route_along_compound_boundary(end, row[-1], polygons, attachment_limit)
-                if prefer_boundary_routes
+                if prefer_boundary_routes and allow_boundary_routes
                 else None
             )
-            if forward is None:
+            if forward is None and allow_interior_routes:
                 forward = route_within_compound_fill(end, row[0], polygons, min_stitch_mm)
-            if reverse is None:
+            if reverse is None and allow_interior_routes:
                 reverse = route_within_compound_fill(end, row[-1], polygons, min_stitch_mm)
             if forward is None and reverse is None:
                 connected.append(current)
@@ -723,6 +725,8 @@ def island_tatami_compound_fill(
     fill_angle_deg: float,
     min_stitch_mm: float = MIN_FILL_STITCH_MM,
     prefer_boundary_routes: bool = False,
+    allow_boundary_routes: bool = True,
+    allow_interior_routes: bool = True,
 ) -> list[list[tuple[float, float]]]:
     polygon_list = [polygon for polygon in polygons if len(polygon) >= 3]
     if not polygon_list:
@@ -740,6 +744,8 @@ def island_tatami_compound_fill(
         max_stitch_mm,
         min_stitch_mm,
         prefer_boundary_routes=prefer_boundary_routes,
+        allow_boundary_routes=allow_boundary_routes,
+        allow_interior_routes=allow_interior_routes,
     )
 
 
@@ -750,6 +756,8 @@ def outline_guided_compound_fill(
     fill_angle_deg: float,
     min_stitch_mm: float = MIN_FILL_STITCH_MM,
     prefer_boundary_routes: bool = False,
+    allow_boundary_routes: bool = True,
+    allow_interior_routes: bool = True,
 ) -> list[list[tuple[float, float]]]:
     polygon_list = [polygon for polygon in polygons if len(polygon) >= 3]
     if not polygon_list:
@@ -767,6 +775,8 @@ def outline_guided_compound_fill(
         max_stitch_mm,
         min_stitch_mm,
         prefer_boundary_routes=prefer_boundary_routes,
+        allow_boundary_routes=allow_boundary_routes,
+        allow_interior_routes=allow_interior_routes,
     )
 
 
@@ -1032,6 +1042,8 @@ def extract_runs(
                         fill_angle_deg,
                         min_stitch_mm=min_stitch_mm,
                         prefer_boundary_routes=path_planning == "clean_top",
+                        allow_boundary_routes=path_planning != "clean_top",
+                        allow_interior_routes=path_planning != "clean_top",
                     )
                     for row in fill_rows:
                         runs.append(StitchRun(color=color, points_mm=row))
@@ -1051,6 +1063,8 @@ def extract_runs(
                         fill_angle_deg,
                         min_stitch_mm=min_stitch_mm,
                         prefer_boundary_routes=path_planning == "clean_top",
+                        allow_boundary_routes=path_planning != "clean_top",
+                        allow_interior_routes=path_planning != "clean_top",
                     )
                     for row in fill_rows:
                         runs.append(StitchRun(color=color, points_mm=row))
