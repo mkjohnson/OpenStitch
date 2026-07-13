@@ -3596,7 +3596,7 @@ def write_segments_as_pes(
     max_stitch_mm: float = 7.0,
     min_stitch_mm: float = 0.3,
     lock_stitch_mm: float = 1.0,
-    connect_short_gaps: bool = True,
+    connect_short_gaps: bool = False,
     max_connect_gap_mm: float = 0.45,
     min_run_length_mm: float = 0.3,
     stitch_perimeter: bool = False,
@@ -3723,6 +3723,9 @@ def write_segments_as_pes(
 
         if previous_point is None or to_embroidery_units(previous_point) != start_units:
             target_point = (start_units[0] / EMB_UNITS_PER_MM, start_units[1] / EMB_UNITS_PER_MM)
+            # The writer has no shape geometry at this stage.  A short distance can
+            # still cross a counter (such as the opening in an "e"), so normal
+            # exports must not infer a sewn bridge here.
             if (
                 connect_short_gaps
                 and

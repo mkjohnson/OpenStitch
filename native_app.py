@@ -1883,7 +1883,7 @@ class OpenStitchWindow(QMainWindow):
                 blocks,
                 pes_path,
                 max_stitch_mm=float(settings["max_stitch_mm"]),
-                connect_short_gaps=True,
+                connect_short_gaps=False,
                 perimeter_offset_mm=float(settings.get("perimeter_offset_mm", 0.24)),
                 perimeter_passes=int(settings.get("perimeter_passes", 1)),
             )
@@ -2229,7 +2229,7 @@ class OpenStitchWindow(QMainWindow):
             new_blocks,
             rendered_pes,
             max_stitch_mm=float(self.state.settings["max_stitch_mm"]),
-            connect_short_gaps=True,
+            connect_short_gaps=False,
             perimeter_offset_mm=float(self.state.settings.get("perimeter_offset_mm", 0.24)),
             perimeter_passes=int(self.state.settings.get("perimeter_passes", 1)),
         )
@@ -2299,7 +2299,7 @@ class OpenStitchWindow(QMainWindow):
                 color_overrides=self.color_overrides(),
                 thread_label_overrides=self.label_overrides(),
                 max_stitch_mm=float(self.state.settings["max_stitch_mm"]),
-                connect_short_gaps=True,
+                connect_short_gaps=False,
                 perimeter_offset_mm=float(self.state.settings.get("perimeter_offset_mm", 0.24)),
                 perimeter_passes=int(self.state.settings.get("perimeter_passes", 1)),
             )
