@@ -239,6 +239,7 @@ class StitchCanvas(QWidget):
         self.background_color = "#fbfcfa"
         self.measurement_units = "metric"
         self.visible_blocks: set[int] | None = None
+        self.realistic_preview: QPixmap | None = None
         self._drag_start: QPoint | None = None
         self._drag_pan = QPointF(0, 0)
         self.setMinimumSize(560, 420)
@@ -262,6 +263,10 @@ class StitchCanvas(QWidget):
 
     def set_visible_blocks(self, visible_blocks: set[int] | None) -> None:
         self.visible_blocks = set(visible_blocks) if visible_blocks is not None else None
+        self.update()
+
+    def set_realistic_preview(self, preview: QPixmap | None) -> None:
+        self.realistic_preview = preview
         self.update()
 
     def set_step(self, step: int) -> None:
@@ -375,6 +380,16 @@ class StitchCanvas(QWidget):
     def paintEvent(self, event) -> None:  # noqa: N802 - Qt override
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, True)
+        if self.realistic_preview is not None and not self.realistic_preview.isNull():
+            painter.fillRect(self.rect(), QColor(self.background_color))
+            target = self.rect().adjusted(12, 12, -12, -12)
+            scaled = self.realistic_preview.scaled(
+                target.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation
+            )
+            x = target.x() + (target.width() - scaled.width()) // 2
+            y = target.y() + (target.height() - scaled.height()) // 2
+            painter.drawPixmap(x, y, scaled)
+            return
         painter.fillRect(self.rect(), QColor(self.background_color))
         self._draw_grid(painter)
         if not self.segments:
@@ -1048,6 +1063,12 @@ class OpenStitchWindow(QMainWindow):
         self.edit_stitches = QCheckBox("Edit stitches: left draw, Shift+left recolor, right delete")
         self.edit_stitches.setChecked(False)
         self.edit_stitches.stateChanged.connect(self.update_canvas_flags)
+        self.realistic_preview_toggle = QPushButton("Realistic Preview")
+        self.realistic_preview_toggle.setCheckable(True)
+        self.realistic_preview_toggle.setToolTip(
+            "Preview the selected color blocks with simulated thread thickness, sheen, and fabric texture"
+        )
+        self.realistic_preview_toggle.toggled.connect(self.toggle_realistic_preview)
         self.diagnostics_toggle = QPushButton("Diagnostics")
         self.diagnostics_toggle.setCheckable(True)
         self.diagnostics_toggle.setToolTip("Show or clear jump, needle point, and trim diagnostics")
@@ -1057,6 +1078,7 @@ class OpenStitchWindow(QMainWindow):
         layout.addWidget(self.show_points)
         layout.addWidget(self.show_markers)
         layout.addWidget(self.edit_stitches)
+        layout.addWidget(self.realistic_preview_toggle)
         edit_buttons = QHBoxLayout()
         undo_edit = QPushButton("Undo Edit")
         undo_edit.clicked.connect(self.undo_stitch_edit)
@@ -1359,6 +1381,49 @@ class OpenStitchWindow(QMainWindow):
         if self.state is not None:
             self.state.settings["display_units"] = self.display_units()
             self.update_stats()
+        self.refresh_realistic_preview()
+
+    def toggle_realistic_preview(self, enabled: bool) -> None:
+        if not enabled:
+            self.canvas.set_realistic_preview(None)
+            return
+        if self.state is None:
+            self.realistic_preview_toggle.blockSignals(True)
+            self.realistic_preview_toggle.setChecked(False)
+            self.realistic_preview_toggle.blockSignals(False)
+            QMessageBox.information(self, "OpenStitch", "Open a design first.")
+            return
+        self.refresh_realistic_preview()
+
+    def refresh_realistic_preview(self) -> None:
+        if (
+            not hasattr(self, "realistic_preview_toggle")
+            or not self.realistic_preview_toggle.isChecked()
+            or self.state is None
+        ):
+            return
+        try:
+            image = realistic_preview_image(
+                self.state.segments,
+                self.state.bounds,
+                fabric_color=self.fabric_color_input.text().strip() or "#fbfcfa",
+                thread_weight=str(self.state.settings.get("thread_weight", DEFAULT_THREAD_WEIGHT)),
+                selected_blocks=self.selected_blocks(),
+                max_width_px=1800,
+                include_hoop=False,
+            )
+            buffer = io.BytesIO()
+            image.save(buffer, format="PNG")
+            pixmap = QPixmap()
+            if not pixmap.loadFromData(buffer.getvalue(), "PNG"):
+                raise ValueError("Could not create the photorealistic preview.")
+            self.canvas.set_realistic_preview(pixmap)
+        except Exception as error:
+            self.canvas.set_realistic_preview(None)
+            self.realistic_preview_toggle.blockSignals(True)
+            self.realistic_preview_toggle.setChecked(False)
+            self.realistic_preview_toggle.blockSignals(False)
+            QMessageBox.warning(self, "OpenStitch", f"Could not create the photorealistic preview: {error}")
 
     def state_snapshot(self) -> dict | None:
         if self.state is None:
@@ -1983,6 +2048,7 @@ class OpenStitchWindow(QMainWindow):
             self.thread_layout.insertWidget(self.thread_layout.count() - 1, row)
         self.canvas.set_visible_blocks(self.selected_blocks())
         self.update_shopping_list()
+        self.refresh_realistic_preview()
 
     def move_thread_row_up(self, row: ThreadRow) -> None:
         self.move_thread_row(row, -1)
@@ -2006,6 +2072,7 @@ class OpenStitchWindow(QMainWindow):
             self.state.color_blocks = ordered
             self.update_color_block_preview()
             self.update_shopping_list()
+            self.refresh_realistic_preview()
 
     def thread_changed(self) -> None:
         if self.state is None:
@@ -2018,6 +2085,7 @@ class OpenStitchWindow(QMainWindow):
         self.canvas.update()
         self.update_shopping_list()
         self.update_color_block_preview()
+        self.refresh_realistic_preview()
 
     def apply_thread_changes(self) -> None:
         if self.state is None:
