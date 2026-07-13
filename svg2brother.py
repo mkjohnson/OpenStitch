@@ -20,6 +20,10 @@ EMB_UNITS_PER_MM = 10.0
 class StitchRun:
     color: str
     points_mm: list[tuple[float, float]]
+    component_id: int = 0
+    # Perimeters must be sewn before their companion fill, even when a
+    # component is entered from the opposite side.
+    phase: int = 1
 
 
 def color_to_hex(value) -> str:
@@ -100,6 +104,13 @@ def route_point_runs(
     if not ordered:
         return []
     if mode == "clean_top":
+        if start is not None and len(ordered) > 1:
+            first = ordered[0]
+            last = ordered[-1]
+            start_distance = min(distance(start, first[0]), distance(start, first[-1]))
+            end_distance = min(distance(start, last[0]), distance(start, last[-1]))
+            if end_distance < start_distance:
+                ordered.reverse()
         routed: list[list[tuple[float, float]]] = []
         current = start
         for run in ordered:
@@ -134,22 +145,45 @@ def route_stitch_runs(
 ) -> list[StitchRun]:
     if mode == "fast":
         return [run for run in runs if len(run.points_mm) >= 2]
-    grouped: dict[str, list[list[tuple[float, float]]]] = {}
+    grouped: dict[str, dict[int, list[StitchRun]]] = {}
     color_order: list[str] = []
     for run in runs:
         if len(run.points_mm) < 2:
             continue
         if run.color not in grouped:
-            grouped[run.color] = []
+            grouped[run.color] = {}
             color_order.append(run.color)
-        grouped[run.color].append(run.points_mm)
+        grouped[run.color].setdefault(run.component_id, []).append(run)
 
     routed: list[StitchRun] = []
     current: tuple[float, float] | None = None
     for color in color_order:
-        for points in route_point_runs(grouped[color], start=current, mode=mode):
-            routed.append(StitchRun(color=color, points_mm=points))
-            current = points[-1]
+        remaining = list(grouped[color].items())
+        while remaining:
+            if current is None:
+                component_id, component_runs = remaining.pop(0)
+            else:
+                component_index = min(
+                    range(len(remaining)),
+                    key=lambda index: min(
+                        distance(current, point)
+                        for run in remaining[index][1]
+                        for point in (run.points_mm[0], run.points_mm[-1])
+                    ),
+                )
+                component_id, component_runs = remaining.pop(component_index)
+            for phase in sorted({run.phase for run in component_runs}):
+                phase_runs = [run.points_mm for run in component_runs if run.phase == phase]
+                for points in route_point_runs(phase_runs, start=current, mode=mode):
+                    routed.append(
+                        StitchRun(
+                            color=color,
+                            points_mm=points,
+                            component_id=component_id,
+                            phase=phase,
+                        )
+                    )
+                    current = points[-1]
     return routed
 
 
@@ -1007,6 +1041,7 @@ def extract_runs(
     if fill_mode == "crosshatch":
         fill_angles.append(-fill_angle_deg if abs(fill_angle_deg) > 0.001 else 90.0)
     runs: list[StitchRun] = []
+    next_component_id = 0
 
     for element in svg.elements():
         if isinstance(element, SVG):
@@ -1027,6 +1062,8 @@ def extract_runs(
         if filled and fill_mode not in {"outline", "contour"}:
             fill_polygons = [subpath_mm for subpath_mm in subpaths_mm if len(subpath_mm) >= 3]
             for component in compound_fill_components(fill_polygons):
+                component_id = next_component_id
+                next_component_id += 1
                 if fill_mode == "outline_fill":
                     if path_planning == "clean_top":
                         for row in outline_compound_fill(
@@ -1034,7 +1071,7 @@ def extract_runs(
                             max_stitch_mm,
                             min_stitch_mm=min_stitch_mm,
                         ):
-                            runs.append(StitchRun(color=color, points_mm=row))
+                            runs.append(StitchRun(color=color, points_mm=row, component_id=component_id, phase=0))
                     fill_rows = outline_guided_compound_fill(
                         component,
                         fill_spacing_mm,
@@ -1046,7 +1083,7 @@ def extract_runs(
                         allow_interior_routes=path_planning != "clean_top",
                     )
                     for row in fill_rows:
-                        runs.append(StitchRun(color=color, points_mm=row))
+                        runs.append(StitchRun(color=color, points_mm=row, component_id=component_id))
                     continue
                 if fill_mode == "island_tatami":
                     if path_planning == "clean_top":
@@ -1055,7 +1092,7 @@ def extract_runs(
                             max_stitch_mm,
                             min_stitch_mm=min_stitch_mm,
                         ):
-                            runs.append(StitchRun(color=color, points_mm=row))
+                            runs.append(StitchRun(color=color, points_mm=row, component_id=component_id, phase=0))
                     fill_rows = island_tatami_compound_fill(
                         component,
                         fill_spacing_mm,
@@ -1067,7 +1104,7 @@ def extract_runs(
                         allow_interior_routes=path_planning != "clean_top",
                     )
                     for row in fill_rows:
-                        runs.append(StitchRun(color=color, points_mm=row))
+                        runs.append(StitchRun(color=color, points_mm=row, component_id=component_id))
                     continue
                 if fill_mode == "mixed":
                     fill_rows = mixed_hatch_compound_fill(
@@ -1078,7 +1115,7 @@ def extract_runs(
                         min_stitch_mm=min_stitch_mm,
                     )
                     for row in fill_rows:
-                        runs.append(StitchRun(color=color, points_mm=row))
+                        runs.append(StitchRun(color=color, points_mm=row, component_id=component_id))
                     continue
                 for angle in fill_angles:
                     fill_rows = optimized_hatch_compound_fill(
@@ -1089,10 +1126,12 @@ def extract_runs(
                         min_stitch_mm=min_stitch_mm,
                     )
                     for row in fill_rows:
-                        runs.append(StitchRun(color=color, points_mm=row))
+                        runs.append(StitchRun(color=color, points_mm=row, component_id=component_id))
         elif filled and fill_mode == "contour":
             fill_polygons = [subpath_mm for subpath_mm in subpaths_mm if len(subpath_mm) >= 3]
             for component in compound_fill_components(fill_polygons):
+                component_id = next_component_id
+                next_component_id += 1
                 fill_rows = optimized_hatch_compound_fill(
                     component,
                     fill_spacing_mm,
@@ -1101,15 +1140,17 @@ def extract_runs(
                     min_stitch_mm=min_stitch_mm,
                 )
                 for row in fill_rows:
-                    runs.append(StitchRun(color=color, points_mm=row))
+                    runs.append(StitchRun(color=color, points_mm=row, component_id=component_id))
                 for row in outline_compound_fill(
                     component,
                     max_stitch_mm,
                     min_stitch_mm=min_stitch_mm,
                 ):
-                    runs.append(StitchRun(color=color, points_mm=row))
+                    runs.append(StitchRun(color=color, points_mm=row, component_id=component_id, phase=2))
         else:
             for subpath_mm in subpaths_mm:
+                component_id = next_component_id
+                next_component_id += 1
                 runs.append(
                     StitchRun(
                         color=color,
@@ -1118,6 +1159,8 @@ def extract_runs(
                             max_stitch_mm,
                             min_stitch_mm=min_stitch_mm,
                         ),
+                        component_id=component_id,
+                        phase=0,
                     )
                 )
 
@@ -1162,7 +1205,14 @@ def transform_runs(
     transformed: list[StitchRun] = []
     for run in runs:
         points = [((x - offset_x) * scale, (y - offset_y) * scale) for x, y in run.points_mm]
-        transformed.append(StitchRun(color=run.color, points_mm=points))
+        transformed.append(
+            StitchRun(
+                color=run.color,
+                points_mm=points,
+                component_id=run.component_id,
+                phase=run.phase,
+            )
+        )
     return transformed
 
 
