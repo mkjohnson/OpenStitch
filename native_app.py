@@ -104,6 +104,13 @@ def resource_path(relative_path: str) -> Path:
     return base / relative_path
 
 
+def output_mode_suffix(settings: dict) -> str:
+    """Create a compact, filesystem-safe label for digitizing settings."""
+    fill_mode = Path(safe_name(f"{settings.get('fill_mode', 'tatami')}.txt")).stem
+    path_mode = Path(safe_name(f"{settings.get('path_planning', 'min_cuts')}.txt")).stem
+    return f"{fill_mode}_{path_mode}"
+
+
 @dataclass
 class DesignState:
     source_path: Path
@@ -1845,11 +1852,14 @@ class OpenStitchWindow(QMainWindow):
         segments, commands = normalize_positive_coordinates(segments, commands)
         bounds = design_bounds(segments, commands)
         if write_outputs or self.state is None:
+            artifact_stem = f"{working_source.stem}_{output_mode_suffix(settings)}"
             if working_source.suffix.lower() == ".pes":
-                pes_path = working_source.with_name(f"{working_source.stem}_native_{uuid.uuid4().hex[:10]}.pes")
+                pes_path = working_source.with_name(
+                    f"{artifact_stem}_native_{uuid.uuid4().hex[:10]}.pes"
+                )
             else:
-                pes_path = working_source.with_suffix(".pes")
-            project_path = working_source.with_suffix(PROJECT_SUFFIX)
+                pes_path = working_source.with_name(f"{artifact_stem}.pes")
+            project_path = working_source.with_name(f"{artifact_stem}{PROJECT_SUFFIX}")
             written = write_segments_as_pes(
                 segments,
                 blocks,
@@ -2184,11 +2194,14 @@ class OpenStitchWindow(QMainWindow):
 
         new_segments, new_commands = normalize_positive_coordinates(new_segments, new_commands)
         bounds = design_bounds(new_segments, new_commands)
-        rendered_pes = self.state.pes_path.with_name(f"{self.state.pes_path.stem}_applied_{uuid.uuid4().hex[:10]}.pes")
-        previous_source = self.state.source_path
-        previous_working_source = self.state.working_source
         state_settings = dict(self.state.settings)
         state_settings["_preserve_block_filter"] = True
+        rendered_pes = self.state.pes_path.with_name(
+            f"{self.state.working_source.stem}_{output_mode_suffix(state_settings)}"
+            f"_applied_{uuid.uuid4().hex[:10]}.pes"
+        )
+        previous_source = self.state.source_path
+        previous_working_source = self.state.working_source
         written = write_segments_as_pes(
             new_segments,
             new_blocks,
