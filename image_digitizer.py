@@ -1165,7 +1165,7 @@ def image_to_segments(
         rows_by_y: dict[int, list[int]] = {}
         for col, row in component:
             rows_by_y.setdefault(row, []).append(col)
-        planned_runs: list[tuple[list[tuple[float, float]], int]] = []
+        planned_rows: list[list[tuple[list[tuple[float, float]], int]]] = []
         min_row = min(rows_by_y)
         selected_row_index = 0
         for row in sorted(rows_by_y):
@@ -1183,6 +1183,7 @@ def image_to_segments(
             add_preserved_range(ranges, start, previous, palette_image.width)
             if selected_row_index % 2:
                 ranges.reverse()
+            row_runs: list[tuple[list[tuple[float, float]], int]] = []
             for left, right in ranges:
                 x1 = origin_x + left / px_per_mm
                 y1 = origin_y + row / px_per_mm
@@ -1190,10 +1191,49 @@ def image_to_segments(
                 y2 = y1
                 if selected_row_index % 2:
                     x1, x2 = x2, x1
-                planned_runs.append(([(x1, y1), (x2, y2)], selected_row_index))
+                row_runs.append(([(x1, y1), (x2, y2)], selected_row_index))
+            if row_runs:
+                planned_rows.append(row_runs)
             selected_row_index += 1
+
+        planned_runs = [run for row_runs in planned_rows for run in row_runs]
+        use_boundary_connectors = True
+        split_rows = [index for index, row_runs in enumerate(planned_rows) if len(row_runs) > 1]
+        if (
+            split_rows
+            and all(len(planned_rows[index]) == 2 for index in split_rows)
+            and split_rows == list(range(split_rows[0], split_rows[-1] + 1))
+        ):
+            # A single counter divides the fill into two sides. Fill one side
+            # downward, cross at the lower bridge, and return up the other side
+            # rather than walking the same counter perimeter on every row.
+            first_split = split_rows[0]
+            last_split = split_rows[-1]
+            top_runs = [run for row_runs in planned_rows[:first_split] for run in row_runs]
+            bottom_runs = [run for row_runs in planned_rows[last_split + 1 :] for run in row_runs]
+            reference = top_runs[-1][0][-1] if top_runs else previous_point
+            first_left = planned_rows[first_split][0][0]
+            first_right = planned_rows[first_split][1][0]
+            left_distance = min(
+                math.hypot(reference[0] - point[0], reference[1] - point[1])
+                for point in first_left
+            ) if reference is not None else 0.0
+            right_distance = min(
+                math.hypot(reference[0] - point[0], reference[1] - point[1])
+                for point in first_right
+            ) if reference is not None else 0.0
+            primary_index = 0 if left_distance <= right_distance else 1
+            secondary_index = 1 - primary_index
+            primary_runs = [planned_rows[index][primary_index] for index in range(first_split, last_split + 1)]
+            secondary_runs = [planned_rows[index][secondary_index] for index in range(last_split, first_split - 1, -1)]
+            planned_runs = [*top_runs, *primary_runs, *bottom_runs, *secondary_runs]
+            # Intentional side transitions should trim once rather than add a
+            # long perimeter retrace that lands on already-filled stitches.
+            use_boundary_connectors = False
+
         for points, row_index in route_planned_runs(planned_runs, start=previous_point, mode=path_planning):
-            stitch_boundary_connector(points[0], row_index)
+            if use_boundary_connectors:
+                stitch_boundary_connector(points[0], row_index)
             append_run(
                 block,
                 points[0][0],
