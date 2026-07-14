@@ -29,7 +29,7 @@ Useful options:
 
 ```powershell
 python svg2brother.py design.svg -o design.pes --fit-width-mm 90
-python svg2brother.py design.svg -o design.pes --fill-spacing-mm 0.45 --max-stitch-mm 3
+python svg2brother.py design.svg -o design.pes --fill-spacing-mm 0.50 --max-stitch-mm 3
 python svg2brother.py design.svg -o design.dst --format dst
 ```
 

@@ -790,7 +790,7 @@ class ViewerHandler(SimpleHTTPRequestHandler):
                 return
         thread_weight = parse_thread_weight(form)
         try:
-            fill_spacing = parse_fill_spacing(form, thread_weight, default=0.4)
+            fill_spacing = parse_fill_spacing(form, thread_weight, default=0.5)
         except ValueError as error:
             self.send_app_error(str(error))
             return

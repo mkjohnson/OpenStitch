@@ -84,6 +84,9 @@ from viewer_server import (
 OUTPUT_DIR = Path.cwd() / "viewer_output"
 PROJECT_SUFFIX = ".embdproj"
 MM_PER_INCH = 25.4
+LARGE_DESIGN_SEGMENT_LIMIT = 100_000
+LARGE_PREVIEW_SEGMENT_BUDGET = 60_000
+LARGE_POINT_PREVIEW_BUDGET = 6_000
 
 
 def hex_to_rgb(color: str) -> tuple[int, int, int]:
@@ -200,7 +203,10 @@ def realistic_preview_image(
     def point(x: float, y: float) -> tuple[float, float]:
         return x * scale + offset_x, y * scale + offset_y
 
-    for segment in segments:
+    preview_stride = max(1, math.ceil(len(segments) / LARGE_DESIGN_SEGMENT_LIMIT))
+    for segment_index, segment in enumerate(segments):
+        if segment_index % preview_stride:
+            continue
         if segment.get("kind") != "stitch":
             continue
         if selected_blocks is not None and segment.get("blockIndex") not in selected_blocks:
@@ -284,6 +290,7 @@ class StitchCanvas(QWidget):
         self.visible_blocks: set[int] | None = None
         self.thread_coverage_mm = 0.43
         self.realistic_preview: QPixmap | None = None
+        self.large_design = False
         self._drag_start: QPoint | None = None
         self._drag_pan = QPointF(0, 0)
         self.setMinimumSize(560, 420)
@@ -298,6 +305,7 @@ class StitchCanvas(QWidget):
         self.segments = segments
         self.commands = commands
         self.bounds = bounds
+        self.large_design = len(segments) > LARGE_DESIGN_SEGMENT_LIMIT
         self.max_step = max((segment.get("step", 0) for segment in segments), default=0)
         self.current_step = self.max_step
         self.visible_blocks = None
@@ -373,7 +381,10 @@ class StitchCanvas(QWidget):
     def _show_stitch_tooltip(self, event) -> None:
         nearest: dict | None = None
         nearest_distance = 8.0
-        for segment in self.segments:
+        stride = max(1, math.ceil(len(self.segments) / 20_000)) if self.large_design else 1
+        for index, segment in enumerate(self.segments):
+            if index % stride:
+                continue
             if segment.get("kind") != "stitch" or segment.get("step", 0) > self.current_step:
                 continue
             if self.visible_blocks is not None and segment.get("blockIndex") not in self.visible_blocks:
@@ -427,7 +438,7 @@ class StitchCanvas(QWidget):
 
     def paintEvent(self, event) -> None:  # noqa: N802 - Qt override
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setRenderHint(QPainter.Antialiasing, not self.large_design or self.zoom > 1.5)
         if self.realistic_preview is not None and not self.realistic_preview.isNull():
             painter.fillRect(self.rect(), QColor(self.background_color))
             target = self.rect().adjusted(12, 12, -12, -12)
@@ -502,18 +513,33 @@ class StitchCanvas(QWidget):
         return f"{round(value_mm)} mm"
 
     def _draw_segments(self, painter: QPainter) -> None:
-        scale, _, _ = self._transform()
+        scale, offset_x, offset_y = self._transform()
         # The technical line must reflect flattened thread coverage rather
         # than a one-pixel vector path, otherwise valid 40 wt fills appear to
         # have fabric gaps between their rows.
         stitch_width = max(1.0, min(12.0, scale * self.thread_coverage_mm))
-        for segment in self.segments:
+        margin = max(2.0, stitch_width / scale * 2.0)
+        min_x = -offset_x / scale - margin
+        max_x = (self.width() - offset_x) / scale + margin
+        min_y = -offset_y / scale - margin
+        max_y = (self.height() - offset_y) / scale + margin
+        stride = max(1, math.ceil(len(self.segments) / LARGE_PREVIEW_SEGMENT_BUDGET)) if self.large_design else 1
+        for index, segment in enumerate(self.segments):
+            if index % stride:
+                continue
             if segment.get("step", 0) > self.current_step:
                 continue
             if self.visible_blocks is not None and segment["blockIndex"] not in self.visible_blocks:
                 continue
             kind = segment["kind"]
             if kind != "stitch" and not self.show_jumps:
+                continue
+            if (
+                max(segment["x1"], segment["x2"]) < min_x
+                or min(segment["x1"], segment["x2"]) > max_x
+                or max(segment["y1"], segment["y2"]) < min_y
+                or min(segment["y1"], segment["y2"]) > max_y
+            ):
                 continue
             if kind == "stitch":
                 color = QColor(segment["color"])
@@ -534,7 +560,10 @@ class StitchCanvas(QWidget):
         stitch_width = max(1, min(3, int(round(scale * 0.08))))
         point_radius = max(2.0, stitch_width * 2.0)
         painter.setPen(QPen(QColor("#172026"), max(0.6, stitch_width * 0.45)))
-        for segment in self.segments:
+        stride = max(1, math.ceil(len(self.segments) / LARGE_POINT_PREVIEW_BUDGET)) if self.large_design else 1
+        for index, segment in enumerate(self.segments):
+            if index % stride:
+                continue
             if segment.get("step", 0) > self.current_step:
                 continue
             if segment.get("kind") != "stitch":
@@ -560,19 +589,16 @@ class StitchCanvas(QWidget):
             painter.drawEllipse(point, 4, 4)
 
     def _current_needle_segment(self) -> dict | None:
-        best: dict | None = None
-        best_step = -1
-        for segment in self.segments:
+        for segment in reversed(self.segments):
             if segment.get("kind") != "stitch":
                 continue
             step = int(segment.get("step", 0))
-            if step > self.current_step or step < best_step:
+            if step > self.current_step:
                 continue
             if self.visible_blocks is not None and segment["blockIndex"] not in self.visible_blocks:
                 continue
-            best = segment
-            best_step = step
-        return best
+            return segment
+        return None
 
     def _draw_playback_needle(self, painter: QPainter) -> None:
         if self.current_step <= 0:
@@ -1176,7 +1202,7 @@ class OpenStitchWindow(QMainWindow):
         self.fill_spacing.setRange(0.1, 2.0)
         self.fill_spacing.setDecimals(2)
         self.fill_spacing.setSingleStep(0.05)
-        self.fill_spacing.setValue(0.40)
+        self.fill_spacing.setValue(0.50)
         self.max_stitch = QDoubleSpinBox()
         self.max_stitch.setRange(0.5, 7.0)
         self.max_stitch.setDecimals(1)
@@ -1498,6 +1524,10 @@ class OpenStitchWindow(QMainWindow):
     def state_snapshot(self) -> dict | None:
         if self.state is None:
             return None
+        if len(self.state.segments) > LARGE_DESIGN_SEGMENT_LIMIT:
+            # Copying every Python stitch dictionary for reset and undo can
+            # consume several additional gigabytes on production-sized files.
+            return None
         return {
             "segments": copy.deepcopy(self.state.segments),
             "commands": copy.deepcopy(self.state.commands),
@@ -1510,6 +1540,11 @@ class OpenStitchWindow(QMainWindow):
         self.baseline_snapshot = self.state_snapshot()
         self.undo_stack.clear()
         self._manual_stitch_anchor = None
+        if self.baseline_snapshot is None and self.state is not None:
+            self.statusBar().showMessage(
+                "Large-design mode: stitch edit undo and reset are disabled to conserve memory.",
+                7000,
+            )
 
     def push_undo_snapshot(self) -> None:
         snapshot = self.state_snapshot()
@@ -2729,6 +2764,17 @@ class OpenStitchWindow(QMainWindow):
         self.refresh_library()
 
     def update_canvas_flags(self) -> None:
+        large_design = self.state is not None and len(self.state.segments) > LARGE_DESIGN_SEGMENT_LIMIT
+        if large_design and self.edit_stitches.isChecked():
+            self.edit_stitches.blockSignals(True)
+            self.edit_stitches.setChecked(False)
+            self.edit_stitches.blockSignals(False)
+        self.edit_stitches.setEnabled(not large_design)
+        self.edit_stitches.setToolTip(
+            "Stitch editing is disabled for designs over 100,000 segments to conserve memory."
+            if large_design
+            else "Draw stitches, recolor with Shift+click, or delete with right-click."
+        )
         self.canvas.show_jumps = self.show_jumps.isChecked()
         self.canvas.show_points = self.show_points.isChecked()
         self.canvas.show_markers = self.show_markers.isChecked()
@@ -2897,6 +2943,7 @@ class OpenStitchWindow(QMainWindow):
         self.step_slider.setValue(self.state.counts.get("needle_points", 0))
         self.populate_threads()
         self.canvas.set_visible_blocks(self.selected_blocks())
+        self.update_canvas_flags()
         self.update_stats()
         self.update_shopping_list()
         self.update_color_block_preview()
