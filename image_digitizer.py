@@ -4,7 +4,10 @@ import math
 import base64
 import colorsys
 import io
+import os
 import re
+import shutil
+import subprocess
 import tempfile
 from collections import deque
 from pathlib import Path
@@ -24,7 +27,8 @@ from thread_inventory import hex_to_rgb, load_inventory
 
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tif", ".tiff", ".webp"}
 PDF_SUFFIXES = {".pdf"}
-RASTER_SUFFIXES = IMAGE_SUFFIXES | PDF_SUFFIXES
+EPS_SUFFIXES = {".eps", ".ps"}
+RASTER_SUFFIXES = IMAGE_SUFFIXES | PDF_SUFFIXES | EPS_SUFFIXES
 
 
 def planned_run_bounds(run: tuple[list[tuple[float, float]], int]) -> tuple[float, float, float, float]:
@@ -361,6 +365,49 @@ def render_svg_file(svg_file: Path, dpi: int = 180) -> Image.Image:
     return image.convert("RGBA")
 
 
+def ghostscript_command() -> str | None:
+    configured = os.environ.get("OPENSTITCH_GHOSTSCRIPT")
+    candidates = [configured, "gswin64c.exe", "gswin32c.exe", "gs"]
+    for root in (os.environ.get("ProgramFiles"), os.environ.get("ProgramFiles(x86)")):
+        if root:
+            candidates.extend(str(path) for path in Path(root).glob("gs/*/bin/gswin*c.exe"))
+    for candidate in candidates:
+        if candidate and (Path(candidate).is_file() or shutil.which(candidate)):
+            return candidate
+    return None
+
+
+def render_eps_file(eps_file: Path, dpi: int = 300) -> Image.Image:
+    command = ghostscript_command()
+    if command is None:
+        raise ValueError(
+            "EPS/PS import requires Ghostscript. Install Ghostscript for Windows, "
+            "then reopen the file, or set OPENSTITCH_GHOSTSCRIPT to gswin64c.exe."
+        )
+    with tempfile.TemporaryDirectory(prefix="openstitch-eps-") as temp_dir:
+        output = Path(temp_dir) / "render.png"
+        result = subprocess.run(
+            [
+                command,
+                "-dSAFER",
+                "-dBATCH",
+                "-dNOPAUSE",
+                "-dEPSCrop",
+                "-sDEVICE=pngalpha",
+                f"-r{max(72, dpi)}",
+                f"-sOutputFile={output}",
+                str(eps_file),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0 or not output.exists():
+            detail = (result.stderr or result.stdout or "Ghostscript could not render the file.").strip()
+            raise ValueError(f"Could not import EPS/PS: {detail}")
+        return Image.open(output).convert("RGBA")
+
+
 def extract_first_embedded_svg_image(svg_file: Path) -> Image.Image | None:
     text = svg_file.read_text(encoding="utf-8", errors="ignore")
     match = re.search(
@@ -377,6 +424,8 @@ def extract_first_embedded_svg_image(svg_file: Path) -> Image.Image | None:
 def load_raster_source(path: Path, pdf_page: int = 1, pdf_dpi: int = 180) -> Image.Image:
     if path.suffix.lower() == ".pdf":
         return render_pdf_page(path, page_index=pdf_page - 1, dpi=pdf_dpi)
+    if path.suffix.lower() in EPS_SUFFIXES:
+        return render_eps_file(path, dpi=max(300, pdf_dpi))
     if path.suffix.lower() == ".svg":
         embedded = extract_first_embedded_svg_image(path)
         if embedded is not None:

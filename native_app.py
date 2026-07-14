@@ -1826,7 +1826,7 @@ class OpenStitchWindow(QMainWindow):
             self,
             "Open design",
             str(Path.home()),
-            "Embroidery and images (*.svg *.pes *.dst *.exp *.png *.jpg *.jpeg *.pdf *.embdproj);;All files (*.*)",
+            "Embroidery, vector, and images (*.svg *.eps *.ps *.pes *.dst *.exp *.png *.jpg *.jpeg *.pdf *.embdproj);;All files (*.*)",
         )
         if path:
             self.load_path(Path(path))
