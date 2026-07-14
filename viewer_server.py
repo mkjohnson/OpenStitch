@@ -18,6 +18,7 @@ from urllib.parse import unquote, urlparse
 import pyembroidery as embroidery
 
 from image_digitizer import is_raster_source
+from machine_limits import EMBROIDERY_SPEED_SPM, MAX_STITCH_MM, MIN_STITCH_MM
 from pes_viewer import (
     apply_thread_metadata,
     build_viewer_html,
@@ -41,8 +42,8 @@ OUTPUT_DIR = DATA_DIR / "viewer_output"
 PROJECT_SUFFIX = ".embdproj"
 TEMPLATE_DIR = RESOURCE_DIR / "templates"
 STATIC_DIR = RESOURCE_DIR / "static"
-MIN_BROTHER_STITCH_MM = 0.5
-MAX_BROTHER_EMBROIDERY_STITCH_MM = 7.0
+MIN_BROTHER_STITCH_MM = MIN_STITCH_MM
+MAX_BROTHER_EMBROIDERY_STITCH_MM = MAX_STITCH_MM
 BROTHER_DUETTA_MAX_HEIGHT_MM = 300.0
 BROTHER_DUETTA_MAX_WIDTH_MM = 180.0
 BROTHER_DUETTA_FRAMES = [
@@ -93,7 +94,7 @@ def parse_max_stitch(form: cgi.FieldStorage, default: float = 5.0) -> float:
     except Exception as error:
         raise ValueError("Max stitch length must be greater than zero") from error
     if max_stitch < MIN_BROTHER_STITCH_MM or max_stitch > MAX_BROTHER_EMBROIDERY_STITCH_MM:
-        raise ValueError("Max stitch length must be between 0.5 and 7.0 mm")
+        raise ValueError("Max stitch length must be between 0.1 and 10.0 mm")
     return max_stitch
 
 
@@ -138,7 +139,7 @@ def project_settings(
     perimeter_offset_mm = max(0.0, min(float(perimeter_offset_mm), 1.5))
     perimeter_passes = max(1, min(int(perimeter_passes), 3))
     path_planning = path_planning if path_planning in {"fast", "clean_top", "min_cuts"} else "min_cuts"
-    min_stitch = max(0.05, min(float(min_stitch), 1.0))
+    min_stitch = max(MIN_STITCH_MM, min(float(min_stitch), 1.0))
     return {
         "fit_width_mm": fit_width,
         "fill_spacing_mm": fill_spacing,
@@ -174,7 +175,7 @@ def write_project_file(project_path: Path, source_path: Path, settings: dict, su
 
 
 def estimate_time_text(counts: dict) -> str:
-    stitch_seconds = counts.get("needle_points", 0) / 600.0 * 60.0
+    stitch_seconds = counts.get("needle_points", 0) / EMBROIDERY_SPEED_SPM * 60.0
     jump_seconds = counts.get("jumps", 0) * 0.25
     trim_seconds = counts.get("trims", 0) * 2.0
     color_seconds = counts.get("color_changes", 0) * 25.0
@@ -271,10 +272,10 @@ def coerce_project_settings(settings: dict) -> dict:
         raise ValueError("Project fill spacing must be between 0.1 and 2 mm")
     max_stitch = float(settings.get("max_stitch_mm", 5.0))
     if max_stitch < MIN_BROTHER_STITCH_MM or max_stitch > MAX_BROTHER_EMBROIDERY_STITCH_MM:
-        raise ValueError("Project max stitch length must be between 0.5 and 7.0 mm")
+        raise ValueError("Project max stitch length must be between 0.1 and 10.0 mm")
     min_stitch = float(settings.get("min_stitch_mm", 0.3))
-    if min_stitch < 0.05 or min_stitch > 1.0:
-        raise ValueError("Project min stitch length must be between 0.05 and 1.0 mm")
+    if min_stitch < MIN_STITCH_MM or min_stitch > 1.0:
+        raise ValueError("Project min stitch length must be between 0.1 and 1.0 mm")
     fill_mode = str(settings.get("fill_mode") or "tatami")
     if fill_mode not in {"tatami", "horizontal", "crosshatch", "mixed", "outline", "contour"}:
         fill_mode = "tatami"

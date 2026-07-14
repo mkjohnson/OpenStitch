@@ -10,6 +10,7 @@ from pathlib import Path
 import pyembroidery as embroidery
 
 from image_digitizer import image_to_segments, is_raster_source, svg_needs_rasterization
+from machine_limits import AUTO_TRIM_DISTANCE_MM, EMBROIDERY_SPEED_SPM
 from svg2brother import extract_runs_for_final_size, positive_float, make_thread
 from thread_catalog import available_thread_brands, load_thread_catalog
 from thread_inventory import closest_inventory_match, load_inventory, normalize_hex, rgb_distance
@@ -301,7 +302,7 @@ def format_usage(meters: float) -> str:
 
 
 def estimate_stitch_time(counts: dict, color_blocks: list[dict]) -> str:
-    stitch_seconds = counts["needle_points"] / 600.0 * 60.0
+    stitch_seconds = counts["needle_points"] / EMBROIDERY_SPEED_SPM * 60.0
     jump_seconds = counts["jumps"] * 0.25
     trim_seconds = counts["trims"] * 2.0
     color_seconds = max(0, len(color_blocks) - 1) * 25.0
@@ -3306,18 +3307,8 @@ def collect_svg_segments(
                     )
                     segment_start = point
                 connected_to_first = True
-            if is_color_travel:
-                counts["trims"] += 1
-                commands.append(
-                    {
-                        "x": previous_point[0],
-                        "y": previous_point[1],
-                        "command": "trim",
-                        "color": active_block["thread"],
-                        "step": counts["needle_points"],
-                    }
-                )
-            elif not can_stitch_travel:
+            should_trim = is_color_travel or travel_distance >= AUTO_TRIM_DISTANCE_MM
+            if should_trim:
                 counts["trims"] += 1
                 commands.append(
                     {
@@ -3745,7 +3736,7 @@ def write_segments_as_pes(
             else:
                 if (
                     old_active_block == block_index
-                    and point_distance(previous_point, target_point) > max(max_connect_gap_mm, min_stitch_mm)
+                    and point_distance(previous_point, target_point) >= AUTO_TRIM_DISTANCE_MM
                 ):
                     pattern.trim()
                 pattern.add_stitch_absolute(embroidery.JUMP, start_units[0], start_units[1])
@@ -3824,7 +3815,7 @@ def write_segments_as_pes(
     pattern.end()
     pattern.write(
         str(output_file),
-        max_jump=int(5.0 * EMB_UNITS_PER_MM),
+        max_jump=int(AUTO_TRIM_DISTANCE_MM * EMB_UNITS_PER_MM),
         full_jump=True,
         # OpenStitch writes its own deliberate tie-ins. Letting the writer add
         # another automatic tie sequence at every trim produces stray visible

@@ -16,6 +16,7 @@ import fitz
 import pyembroidery as embroidery
 from PIL import Image, ImageChops, ImageOps
 
+from machine_limits import AUTO_TRIM_DISTANCE_MM
 from svg2brother import (
     EMB_UNITS_PER_MM,
     island_tatami_compound_fill,
@@ -984,14 +985,19 @@ def image_to_segments(
                 connector_limit_mm = min(connector_limit_mm, max(fill_spacing_mm * 2.0, 0.6))
             # A travel move is only safe as an actual stitch between adjacent
             # scan rows. Wider gaps are different islands, counters, or a new
-            # component and must be trimmed before the jump.
-            should_trim = (
+            # component and require a jump; the machine trims long jumps at
+            # its configured auto-trim threshold.
+            requires_jump = (
                 pending_travel in {"travel_after_color_change", "travel_after_trim"}
                 or travel_distance > connector_limit_mm
             )
+            should_trim = (
+                pending_travel in {"travel_after_color_change", "travel_after_trim"}
+                or travel_distance >= AUTO_TRIM_DISTANCE_MM
+            )
             can_stitch_travel = (
                 path_planning in {"min_cuts", "clean_top"}
-                and not should_trim
+                and not requires_jump
                 and not pending_travel
                 and travel_distance <= connector_limit_mm
             )

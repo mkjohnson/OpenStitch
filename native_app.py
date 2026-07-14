@@ -56,6 +56,7 @@ from PySide6.QtWidgets import (
 )
 
 from image_digitizer import image_to_segments, is_raster_source, svg_needs_rasterization
+from machine_limits import MAX_STITCH_MM, MIN_STITCH_MM, SAFE_MAX_TOTAL_STITCHES
 from pes_viewer import (
     apply_thread_metadata,
     add_perimeter_segments,
@@ -1055,8 +1056,8 @@ class OpenStitchWindow(QMainWindow):
         controls = [
             (self.fit_width, 1.0, 300.0, 3, 1.0),
             (self.fill_spacing, 0.1, 2.0, 3, 0.05),
-            (self.max_stitch, 0.5, 7.0, 3, 0.1),
-            (self.min_stitch, 0.05, 1.0, 3, 0.05),
+            (self.max_stitch, MIN_STITCH_MM, MAX_STITCH_MM, 3, 0.1),
+            (self.min_stitch, MIN_STITCH_MM, 1.0, 3, 0.05),
             (self.perimeter_offset, 0.0, 1.5, 3, 0.05),
         ]
 
@@ -1204,12 +1205,12 @@ class OpenStitchWindow(QMainWindow):
         self.fill_spacing.setSingleStep(0.05)
         self.fill_spacing.setValue(0.50)
         self.max_stitch = QDoubleSpinBox()
-        self.max_stitch.setRange(0.5, 7.0)
+        self.max_stitch.setRange(MIN_STITCH_MM, MAX_STITCH_MM)
         self.max_stitch.setDecimals(1)
         self.max_stitch.setValue(5.0)
         self.max_stitch.setSuffix(" mm")
         self.min_stitch = QDoubleSpinBox()
-        self.min_stitch.setRange(0.05, 1.0)
+        self.min_stitch.setRange(MIN_STITCH_MM, 1.0)
         self.min_stitch.setDecimals(2)
         self.min_stitch.setSingleStep(0.05)
         self.min_stitch.setValue(0.30)
@@ -2186,6 +2187,15 @@ class OpenStitchWindow(QMainWindow):
             )
         if micro_segments:
             quality_notes.append(f"{micro_segments} preview stitch segments are under {self.format_length(0.30)}.")
+        stitch_total = counts.get("needle_points", 0)
+        if stitch_total > SAFE_MAX_TOTAL_STITCHES:
+            quality_notes.append(
+                f"Exceeds the {SAFE_MAX_TOTAL_STITCHES:,}-stitch Duetta safety limit. Split this design before stitching."
+            )
+        elif stitch_total > SAFE_MAX_TOTAL_STITCHES * 0.9:
+            quality_notes.append(
+                f"Near the {SAFE_MAX_TOTAL_STITCHES:,}-stitch Duetta safety limit."
+            )
         quality_text = "\n".join(quality_notes) if quality_notes else "Quality checks: no obvious density warning."
         fill_types = classify_fill_types(self.state.segments, self.state.color_blocks)
         self.stats_label.setText(
