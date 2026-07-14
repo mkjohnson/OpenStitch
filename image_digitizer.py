@@ -1307,7 +1307,11 @@ def image_to_segments(
                 row_index,
             )
 
-    def stitch_component_vector_fill(block: dict, component: set[tuple[int, int]]) -> None:
+    def stitch_component_vector_fill(
+        block: dict,
+        component: set[tuple[int, int]],
+        stitch_angle_deg: float | None = None,
+    ) -> None:
         """Trace a raster island, then fill it with the SVG-style planner."""
         nonlocal pending_travel
         polygons = [
@@ -1325,6 +1329,7 @@ def image_to_segments(
         min_y = min(y for polygon in polygons for _, y in polygon)
         max_y = max(y for polygon in polygons for _, y in polygon)
         narrowest_side = min(max_x - min_x, max_y - min_y)
+        stitch_angle = fill_angle_deg if stitch_angle_deg is None else stitch_angle_deg
         planned_layers: list[list[list[tuple[float, float]]]] = []
         # On broad islands, use a sparse perpendicular layer for the machine's
         # internal travel. It supports the top fill without repeatedly sewing
@@ -1335,7 +1340,7 @@ def image_to_segments(
                     polygons,
                     max(1.2, fill_spacing_mm * 3.0),
                     max_stitch_mm,
-                    fill_angle_deg + 90.0,
+                    stitch_angle + 90.0,
                     min_stitch_mm=min_run_mm,
                     prefer_boundary_routes=False,
                     allow_boundary_routes=True,
@@ -1347,7 +1352,7 @@ def image_to_segments(
                 polygons,
                 fill_spacing_mm,
                 max_stitch_mm,
-                fill_angle_deg,
+                stitch_angle,
                 min_stitch_mm=min_run_mm,
                 prefer_boundary_routes=path_planning == "clean_top",
                 allow_boundary_routes=True,
@@ -1494,13 +1499,11 @@ def image_to_segments(
                         ),
                 )
                 component = remaining_components.pop(component_index)
-                # Like a 3D-print perimeter, establish the real outline and
-                # counters before laying down the raster infill. This gives the
-                # later fill an edge to cover against instead of treating the
-                # whole component as disconnected scan rows.
+                # Establish the real outline and counters before the
+                # island-aware fill so the visible edge stays clean.
                 if fill_mode == "outline_fill":
                     stitch_boundary_passes(block, component, 1)
-                stitch_component_scan_fill(block, component)
+                stitch_component_vector_fill(block, component)
                 if remaining_components:
                     pending_travel = "travel_after_trim"
             continue
@@ -1539,14 +1542,17 @@ def image_to_segments(
                 if remaining_components:
                     pending_travel = "travel_after_trim"
         else:
-            if len(stitch_angles) == 1 and abs(stitch_angles[0]) <= 0.001:
-                pixels = palette_image.load()
-                active = {
-                    (col, row)
-                    for row in range(palette_image.height)
-                    for col in range(palette_image.width)
-                    if pixels[col, row] == palette_index
-                }
+            # Trace every color island before filling it. The former pixel-row
+            # fallback made normal tatami imports look like a raster printer,
+            # especially at 45 degrees or after a change in fill spacing.
+            pixels = palette_image.load()
+            active = {
+                (col, row)
+                for row in range(palette_image.height)
+                for col in range(palette_image.width)
+                if pixels[col, row] == palette_index
+            }
+            for stitch_angle in stitch_angles:
                 remaining_components = stitchable_components(active, palette_image.width, palette_image.height)
                 while remaining_components:
                     if previous_point is None:
@@ -1561,11 +1567,13 @@ def image_to_segments(
                                 - (origin_y + component_centroid(remaining_components[index])[1] / px_per_mm),
                             ),
                         )
-                    stitch_component_scan_fill(block, remaining_components.pop(component_index))
+                    stitch_component_vector_fill(
+                        block,
+                        remaining_components.pop(component_index),
+                        stitch_angle,
+                    )
                     if remaining_components:
                         pending_travel = "travel_after_trim"
-            else:
-                stitch_scan_fill(block, palette_index, stitch_angles)
 
     if not segments:
         raise ValueError("No stitchable image regions were found.")
