@@ -194,6 +194,8 @@ def realistic_preview_image(
     shadow_draw = ImageDraw.Draw(shadow, "RGBA")
     thread_layer = Image.new("RGBA", image.size, (0, 0, 0, 0))
     thread_draw = ImageDraw.Draw(thread_layer, "RGBA")
+    fiber_layer = Image.new("RGBA", image.size, (0, 0, 0, 0))
+    fiber_draw = ImageDraw.Draw(fiber_layer, "RGBA")
 
     def point(x: float, y: float) -> tuple[float, float]:
         return x * scale + offset_x, y * scale + offset_y
@@ -219,12 +221,44 @@ def realistic_preview_image(
         )
         thread_draw.line([start, end], fill=low, width=max(1, coverage_width + 1))
         thread_draw.line([start, end], fill=base, width=coverage_width)
+        span = math.hypot(end[0] - start[0], end[1] - start[1])
+        if span <= 0.01:
+            continue
+        direction_x = (end[0] - start[0]) / span
+        direction_y = (end[1] - start[1]) / span
+        normal_x = -direction_y
+        normal_y = direction_x
+        sheen_offset = coverage_width * (0.10 + ((segment.get("step", 0) % 5) - 2) * 0.025)
+        sheen_start = (start[0] + normal_x * sheen_offset, start[1] + normal_y * sheen_offset)
+        sheen_end = (end[0] + normal_x * sheen_offset, end[1] + normal_y * sheen_offset)
         if nominal_thread_width >= 3 and highlight_alpha > 24:
-            thread_draw.line([start, end], fill=high, width=max(1, nominal_thread_width // 3))
+            thread_draw.line([sheen_start, sheen_end], fill=high, width=max(1, nominal_thread_width // 3))
+
+        # Short diagonal glints imply the twist of plied embroidery thread.
+        # The deterministic phase gives adjacent stitches variation without
+        # making exported previews flicker between renders.
+        twist_count = min(5, max(1, int(span / max(coverage_width * 3.5, 10))))
+        twist_color = (*blend_rgb(color, (255, 255, 255), 0.25 + luminance * 0.16), 34 + int(luminance * 42))
+        for twist_index in range(twist_count):
+            phase = (segment.get("step", 0) * 0.173 + twist_index * 0.71) % 1.0
+            position = 0.14 + ((twist_index + phase) / (twist_count + 0.9)) * 0.76
+            center_x = start[0] + (end[0] - start[0]) * position
+            center_y = start[1] + (end[1] - start[1]) * position
+            slant = coverage_width * 0.44
+            run = coverage_width * 0.32
+            fiber_draw.line(
+                [
+                    (center_x - normal_x * slant - direction_x * run, center_y - normal_y * slant - direction_y * run),
+                    (center_x + normal_x * slant + direction_x * run, center_y + normal_y * slant + direction_y * run),
+                ],
+                fill=twist_color,
+                width=1,
+            )
 
     shadow = shadow.filter(ImageFilter.GaussianBlur(radius=max(0.6, coverage_width * 0.28)))
     image = Image.alpha_composite(image.convert("RGBA"), shadow)
     image = Image.alpha_composite(image, thread_layer)
+    image = Image.alpha_composite(image, fiber_layer)
     return image.convert("RGB")
 
 
