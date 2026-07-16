@@ -847,6 +847,130 @@ h3 {
   text-decoration: none;
 }
 
+.about {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(320px, 0.68fr) minmax(560px, 1.32fr);
+  gap: clamp(52px, 9vw, 150px);
+  align-items: start;
+  background:
+    radial-gradient(circle at 88% 18%, rgba(217, 238, 231, 0.78), transparent 26%),
+    #fbfbf7;
+}
+
+.about::before {
+  position: absolute;
+  right: -120px;
+  bottom: -220px;
+  width: 460px;
+  height: 460px;
+  border: 1px solid rgba(19, 117, 111, 0.08);
+  border-radius: 50%;
+  content: "";
+  pointer-events: none;
+}
+
+.about-intro {
+  position: sticky;
+  top: 112px;
+}
+
+.about-intro h2 {
+  max-width: 590px;
+  font-size: clamp(2.8rem, 5vw, 5rem);
+}
+
+.about-mark {
+  position: relative;
+  width: 132px;
+  height: 82px;
+  margin-top: 48px;
+}
+
+.about-mark::after {
+  position: absolute;
+  top: 59px;
+  left: 88px;
+  width: 82px;
+  height: 34px;
+  border-top: 2px solid var(--teal);
+  border-radius: 50%;
+  content: "";
+  transform: rotate(18deg);
+}
+
+.about-mark i {
+  position: absolute;
+  top: 0;
+  display: block;
+  width: 70px;
+  height: 70px;
+  border: 8px solid var(--teal);
+  border-radius: 50%;
+}
+
+.about-mark i:nth-child(1) { left: 0; }
+.about-mark i:nth-child(2) { left: 31px; border-color: var(--gold); }
+.about-mark i:nth-child(3) { left: 62px; border-color: var(--orange); }
+
+.about-note {
+  position: relative;
+  z-index: 1;
+  padding: clamp(40px, 6vw, 78px);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: rgba(255, 255, 255, 0.88);
+  box-shadow: 0 28px 90px rgba(24, 55, 47, 0.11);
+}
+
+.about-note::before {
+  position: absolute;
+  top: 20px;
+  right: 34px;
+  color: var(--mint);
+  content: "“";
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: clamp(7rem, 12vw, 12rem);
+  line-height: 1;
+  pointer-events: none;
+}
+
+.about-kicker {
+  position: relative;
+  z-index: 1;
+  display: inline-block;
+  margin-bottom: 34px;
+  color: var(--teal);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+}
+
+.about-note p {
+  position: relative;
+  z-index: 1;
+  max-width: 790px;
+  margin: 0;
+  color: var(--ink-soft);
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: clamp(1.25rem, 2vw, 1.7rem);
+  line-height: 1.62;
+}
+
+.about-note p + p {
+  margin-top: 26px;
+}
+
+.about-note .about-dedication {
+  margin-top: 38px;
+  padding-top: 30px;
+  border-top: 1px solid var(--line);
+  color: var(--forest);
+  font-size: clamp(1.15rem, 1.7vw, 1.4rem);
+  font-style: italic;
+}
+
 .workflow {
   display: grid;
   grid-template-columns: minmax(320px, 0.72fr) minmax(580px, 1.28fr);
@@ -1062,11 +1186,13 @@ footer > p {
   }
 
   .workflow,
-  .install {
+  .install,
+  .about {
     grid-template-columns: 1fr;
   }
 
-  .workflow-copy {
+  .workflow-copy,
+  .about-intro {
     position: static;
   }
 
@@ -1227,6 +1353,20 @@ footer > p {
   .addon-note {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .about-note {
+    padding: 34px 24px;
+  }
+
+  .about-note::before {
+    top: 16px;
+    right: 20px;
+    font-size: 7rem;
+  }
+
+  .about-note p {
+    font-size: 1.16rem;
   }
 
   .steps li {
