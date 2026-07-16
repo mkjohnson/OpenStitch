@@ -3,220 +3,284 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>OpenStitch</title>
-  <meta name="description" content="OpenStitch converts SVG, image, PDF, and PES embroidery designs into Brother-compatible PES files with stitch-path previews.">
+  <title>OpenStitch — From artwork to confident stitches</title>
+  <meta name="description" content="OpenStitch is a local desktop embroidery studio for converting artwork to Brother PES, inspecting every stitch, matching thread colors, and extending the workflow with paid editing and cross-stitch add-ons.">
+  <meta name="theme-color" content="#0f3f3c">
+  <meta property="og:title" content="OpenStitch — From artwork to confident stitches">
+  <meta property="og:description" content="Convert, preview, refine, and export embroidery designs locally.">
+  <meta property="og:image" content="assets/graphics/embroidery-studio-hero.jpg">
   <link rel="icon" href="assets/openstitch.ico">
   <link rel="apple-touch-icon" href="assets/openstitch-logo.png">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
   <header class="site-header">
     <a class="brand" href="#top" aria-label="OpenStitch home">
-      <img class="brand-mark" src="assets/openstitch-logo.png" alt="" aria-hidden="true">
+      <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
       <span>OpenStitch</span>
     </a>
     <nav aria-label="Primary navigation">
+      <a href="#product">Product</a>
+      <a href="#addons">Paid add-ons</a>
       <a href="#examples">Examples</a>
-      <a href="#screenshots">Screenshots</a>
-      <a href="#features">Features</a>
-      <a href="#workflow">Workflow</a>
-      <a href="#run">Run</a>
-      <a href="#pages">Pages</a>
-      <a href="https://github.com/mkjohnson/OpenStitch">GitHub</a>
+      <a href="#install">Install</a>
     </nav>
+    <a class="header-cta" href="https://github.com/mkjohnson/OpenStitch">
+      View on GitHub <span aria-hidden="true">↗</span>
+    </a>
   </header>
 
-  <main id="top">
-    <section class="hero">
+  <main id="main">
+    <section class="hero" id="top">
       <div class="hero-copy">
-        <p class="eyebrow">Desktop embroidery utility</p>
-        <h1>OpenStitch</h1>
-        <p class="lede">
-          Convert artwork into Brother-compatible embroidery files, inspect the stitch path,
-          tune thread colors, and catch risky designs before they reach the machine.
+        <p class="eyebrow"><span></span> Local-first embroidery software</p>
+        <h1>From artwork to <em>confident stitches.</em></h1>
+        <p class="hero-lede">
+          Convert artwork into Brother-compatible PES files, inspect the full stitch path,
+          tune thread colors, and catch risky designs before they reach your machine.
         </p>
-        <div class="actions">
-          <a class="button primary" href="#run">Run Locally</a>
-          <a class="button secondary" href="https://github.com/mkjohnson/OpenStitch">View Repository</a>
+        <div class="hero-actions">
+          <a class="button button-primary" href="#install">Get OpenStitch</a>
+          <a class="button button-quiet" href="#product">
+            See it in action <span aria-hidden="true">↓</span>
+          </a>
         </div>
-        <div class="hero-note" role="note">
-          <strong>Heads up:</strong> this GitHub Pages site is documentation only.
-          Conversion runs locally through Python or the Windows desktop app.
+        <div class="hero-meta" aria-label="Product highlights">
+          <span><b aria-hidden="true">✓</b> Runs locally</span>
+          <span><b aria-hidden="true">✓</b> Apache-2.0 core</span>
+          <span><b aria-hidden="true">✓</b> Windows desktop app</span>
         </div>
       </div>
 
-      <div class="hero-visual">
-        <figure class="logo-card">
-          <img src="assets/openstitch-logo.png" alt="OpenStitch logo mark with teal, gold, and orange thread-inspired rings.">
-        </figure>
-        <figure class="preview">
-          <img src="assets/openstitch-preview.png" alt="Generic OpenStitch stitch preview with visible stitch rows, needle points, jumps, and color blocks.">
-          <figcaption>
-            Generic stitch preview with measurements, color blocks, travel paths, and needle points.
-          </figcaption>
-        </figure>
+      <div class="hero-media">
+        <img src="assets/graphics/embroidery-studio-hero.jpg" alt="A modern botanical embroidery design being stitched in a hoop beside teal, green, gold, and orange thread spools.">
+        <div class="hero-float hero-float-top">
+          <span class="float-icon">⌁</span>
+          <span><b>14,024</b> needle points checked</span>
+        </div>
+        <div class="hero-float hero-float-bottom">
+          <span class="thread-dots" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+          <span><b>Thread-ready</b> Madeira + Floriani matching</span>
+        </div>
       </div>
     </section>
 
-    <section class="stats" aria-label="Supported capabilities">
-      <div><strong>SVG</strong><span>vector import</span></div>
-      <div><strong>JPG/PNG/PDF</strong><span>image conversion</span></div>
-      <div><strong>PES</strong><span>Brother output</span></div>
-      <div><strong>Thread brands</strong><span>Floriani + Madeira</span></div>
+    <section class="format-rail" aria-label="Supported formats and output">
+      <p>Artwork in</p>
+      <div class="formats"><span>SVG</span><span>PNG</span><span>JPG</span><span>PDF</span><span>EPS</span></div>
+      <span class="rail-arrow" aria-hidden="true">→</span>
+      <p>Machine-ready</p>
+      <strong>PES</strong>
     </section>
 
-    <section id="examples" class="section examples">
-      <div class="section-heading">
-        <p class="eyebrow">Public-domain examples</p>
-        <h2>Sample conversions from reusable SVG artwork</h2>
+    <section class="section product" id="product">
+      <div class="section-intro split-intro">
+        <div>
+          <p class="eyebrow"><span></span> The core workspace</p>
+          <h2>See every stitch before your machine does.</h2>
+        </div>
+        <p>
+          OpenStitch puts conversion settings, stitch-path inspection, thread matching,
+          design health, and export in one focused desktop workspace.
+        </p>
       </div>
+
+      <figure class="workspace-shot media-frame">
+        <div class="window-chrome" aria-hidden="true"><i></i><i></i><i></i><span>OpenStitch workspace</span></div>
+        <img src="assets/screenshots/workspace-botanical.jpg" alt="OpenStitch desktop workspace showing a botanical stitch preview, project settings, Madeira thread matches, color blocks, and playback controls.">
+        <figcaption>
+          <span><b>4</b> color blocks</span>
+          <span><b>14,024</b> needle points</span>
+          <span><b>30 min</b> estimated stitch time</span>
+          <span><b>90 × 106 mm</b> finished design</span>
+        </figcaption>
+      </figure>
+
+      <div class="capability-grid">
+        <article>
+          <span class="cap-number">01</span>
+          <h3>Convert with control</h3>
+          <p>Set physical size, fill spacing, detail preservation, stitch length, fill type, and path-planning priorities.</p>
+        </article>
+        <article>
+          <span class="cap-number">02</span>
+          <h3>Inspect the path</h3>
+          <p>Zoom, pan, animate, and inspect jumps, trims, color changes, density, needle points, and machine-frame fit.</p>
+        </article>
+        <article>
+          <span class="cap-number">03</span>
+          <h3>Plan real thread</h3>
+          <p>Match design colors to Madeira or Floriani, track inventory, estimate usage, and build a practical shopping list.</p>
+        </article>
+        <article>
+          <span class="cap-number">04</span>
+          <h3>Refine and export</h3>
+          <p>Reorder or merge color blocks, edit stitches, save projects, generate presentation previews, and export PES.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section addons" id="addons">
+      <div class="addon-orbit addon-orbit-one" aria-hidden="true"></div>
+      <div class="addon-orbit addon-orbit-two" aria-hidden="true"></div>
+      <div class="section-intro addon-intro">
+        <p class="eyebrow eyebrow-light"><span></span> Paid add-ons</p>
+        <h2>Go beyond conversion.</h2>
+        <p>
+          Keep the open-source core focused, then add specialized creative tools when your
+          workflow needs them. Licensed add-ons install from a ZIP and remain available offline.
+        </p>
+      </div>
+
+      <div class="addon-grid">
+        <article class="addon-card">
+          <div class="addon-card-copy">
+            <div class="addon-title-row">
+              <span class="addon-index">01</span>
+              <span class="pill">Paid add-on</span>
+            </div>
+            <h3>Full Editor</h3>
+            <p>
+              Build and reshape artwork without leaving OpenStitch. Flatten images, use installed
+              Windows fonts, add text and geometric shapes, draw freehand, and optimize item order.
+            </p>
+            <ul class="feature-list">
+              <li>Image color flattening</li>
+              <li>Text, shapes, and freehand drawing</li>
+              <li>Stitch-order optimization</li>
+              <li>Render directly into the core workspace</li>
+            </ul>
+          </div>
+          <figure class="addon-figure">
+            <img src="assets/screenshots/full-editor-botanical.jpg" alt="OpenStitch Full Editor add-on showing a botanical design and controls for flattening, fonts, text, shapes, drawing, and optimization.">
+            <figcaption>Artwork editing, flattened to eight production-friendly colors.</figcaption>
+          </figure>
+        </article>
+
+        <article class="addon-card addon-card-reverse">
+          <div class="addon-card-copy">
+            <div class="addon-title-row">
+              <span class="addon-index">02</span>
+              <span class="pill">Paid add-on</span>
+            </div>
+            <h3>Cross-Stitch Pattern</h3>
+            <p>
+              Turn artwork into a DMC-matched chart for hand stitching or a machine-embroidered
+              full-cross design that loads directly into the OpenStitch workspace.
+            </p>
+            <ul class="feature-list">
+              <li>DMC thread-color matching</li>
+              <li>Configurable fabric count and chart size</li>
+              <li>Printable PNG and PDF charts</li>
+              <li>Two-pass full crosses with PES output</li>
+            </ul>
+          </div>
+          <figure class="addon-figure">
+            <img src="assets/screenshots/cross-stitch-botanical.jpg" alt="OpenStitch Cross-Stitch Pattern add-on showing a 72 by 72 botanical chart with DMC-matched colors and export controls.">
+            <figcaption>72 × 72 stitches, 4,037 full crosses, and seven DMC colors.</figcaption>
+          </figure>
+        </article>
+      </div>
+
+      <div class="addon-note">
+        <div>
+          <span class="status-dot" aria-hidden="true"></span>
+          <p><b>Store launch details are coming soon.</b> Purchased packages and signed licenses install from <em>Add-ons &amp; Licenses</em> inside OpenStitch.</p>
+        </div>
+        <a href="https://github.com/mkjohnson/OpenStitch/issues">Ask a question <span aria-hidden="true">↗</span></a>
+      </div>
+    </section>
+
+    <section class="section examples" id="examples">
+      <div class="section-intro split-intro">
+        <div>
+          <p class="eyebrow"><span></span> Start with familiar artwork</p>
+          <h2>Small tests. Useful answers.</h2>
+        </div>
+        <p>
+          Public-domain samples make it easy to compare fill behavior, color ordering, travel paths,
+          and detail cleanup before working with a production design.
+        </p>
+      </div>
+
       <div class="example-grid">
-        <article class="example-card">
-          <img src="assets/examples/star-15.png" alt="OpenStitch preview generated from a CC0 star SVG.">
-          <div>
-            <h3>CC0 Star</h3>
-            <p>A simple geometric shape for checking scale, fill spacing, and outline behavior.</p>
-            <a href="https://github.com/mkjohnson/OpenStitch/blob/main/examples/public-domain/star-15.svg">View source SVG</a>
-          </div>
+        <article class="example-card example-card-wide">
+          <a class="example-image" href="https://github.com/mkjohnson/OpenStitch/blob/main/examples/public-domain/retro-flower.svg" aria-label="View the Retro Flower source SVG on GitHub">
+            <img src="assets/examples/retro-flower.png" alt="OpenStitch stitch preview generated from a public-domain retro flower SVG.">
+          </a>
+          <div><span>Multi-color</span><h3>Retro Flower</h3><p>Check color blocks, ordering, and thread planning.</p></div>
         </article>
         <article class="example-card">
-          <img src="assets/examples/retro-flower.png" alt="OpenStitch preview generated from a public-domain retro flower SVG.">
-          <div>
-            <h3>Retro Flower</h3>
-            <p>A multi-color example for testing color blocks, ordering, and thread planning.</p>
-            <a href="https://github.com/mkjohnson/OpenStitch/blob/main/examples/public-domain/retro-flower.svg">View source SVG</a>
-          </div>
+          <a class="example-image" href="https://github.com/mkjohnson/OpenStitch/blob/main/examples/public-domain/star-15.svg" aria-label="View the Star source SVG on GitHub">
+            <img src="assets/examples/star-15.png" alt="OpenStitch stitch preview generated from a CC0 star SVG.">
+          </a>
+          <div><span>Geometry</span><h3>CC0 Star</h3><p>Check scale, spacing, and outline behavior.</p></div>
         </article>
         <article class="example-card">
-          <img src="assets/examples/butterfly.png" alt="OpenStitch preview generated from a public-domain butterfly SVG.">
-          <div>
-            <h3>Butterfly</h3>
-            <p>A detailed line-art example for checking travel moves and stitch cleanup.</p>
-            <a href="https://github.com/mkjohnson/OpenStitch/blob/main/examples/public-domain/butterfly.svg">View source SVG</a>
-          </div>
+          <a class="example-image" href="https://github.com/mkjohnson/OpenStitch/blob/main/examples/public-domain/butterfly.svg" aria-label="View the Butterfly source SVG on GitHub">
+            <img src="assets/examples/butterfly.png" alt="OpenStitch stitch preview generated from a public-domain butterfly SVG.">
+          </a>
+          <div><span>Line detail</span><h3>Butterfly</h3><p>Check travel moves and delicate cleanup.</p></div>
         </article>
       </div>
       <p class="source-note">
-        Example SVGs come from Openclipart public-domain/CC0 entries:
-        <a href="https://openclipart.org/detail/260835/star15">star-15</a>,
+        Example artwork is public domain / CC0 via Openclipart:
         <a href="https://openclipart.org/detail/182782/retro-flower-by-nizips-182782">Retro Flower</a>,
-        and <a href="https://openclipart.org/detail/237959/Butterfly">Butterfly</a>.
+        <a href="https://openclipart.org/detail/260835/star15">Star</a>, and
+        <a href="https://openclipart.org/detail/237959/Butterfly">Butterfly</a>.
       </p>
     </section>
 
-    <section id="screenshots" class="section screenshots">
-      <div class="section-heading">
-        <p class="eyebrow">In action</p>
-        <h2>Native app previews and presentation exports</h2>
-      </div>
-      <div class="screenshot-grid">
-        <figure>
-          <img src="assets/screenshots/workspace-preview.png" alt="OpenStitch desktop app showing conversion settings, stitch preview, view options, and playback controls.">
-          <figcaption>
-            The desktop workspace keeps conversion settings, quality notes, measurements, overlays, and playback controls in one place.
-          </figcaption>
-        </figure>
-        <figure>
-          <img src="assets/screenshots/realistic-export.png" alt="OpenStitch realistic screenshot export with simulated thread thickness and fabric texture.">
-          <figcaption>
-            Realistic screenshot export creates a presentation image with simulated thread thickness, sheen, shadow, and fabric texture.
-          </figcaption>
-        </figure>
-      </div>
-    </section>
-
-    <section id="features" class="section">
-      <div class="section-heading">
-        <p class="eyebrow">Core tools</p>
-        <h2>Built for previewing and troubleshooting stitches</h2>
-      </div>
-      <div class="feature-grid">
-        <article>
-          <span class="card-label">Convert</span>
-          <h3>Artwork to embroidery</h3>
-          <p>Import SVG, JPG, PNG, PDF, or PES files and generate Brother PES output with adjustable size, stitch length, fill spacing, fill mode, and color flattening.</p>
-        </article>
-        <article>
-          <span class="card-label">Preview</span>
-          <h3>Animated stitch path</h3>
-          <p>Step through the toolpath with zoom, pan, measurements, jumps, trims, color-change markers, optional needle points, and an animated needle position.</p>
-        </article>
-        <article>
-          <span class="card-label">Thread</span>
-          <h3>Inventory planning</h3>
-          <p>Compare design colors with Floriani or Madeira thread colors, track your own thread inventory, estimate usage, and generate a shopping list.</p>
-        </article>
-        <article>
-          <span class="card-label">Edit</span>
-          <h3>Refine before export</h3>
-          <p>Deselect or merge color blocks, apply changes, draw or delete stitches, save projects, bundle project files, and export a fresh PES.</p>
-        </article>
-        <article>
-          <span class="card-label">Fill</span>
-          <h3>Contour and path planning</h3>
-          <p>Choose mixed, tatami, crosshatch, outline, or contour-style fills, then use path planning modes to balance speed, clean top stitching, and fewer cuts.</p>
-        </article>
-      </div>
-    </section>
-
-    <section id="workflow" class="section workflow">
-      <div class="section-heading">
-        <p class="eyebrow">Typical workflow</p>
-        <h2>From image to machine file</h2>
+    <section class="section workflow" aria-labelledby="workflow-title">
+      <div class="workflow-copy">
+        <p class="eyebrow"><span></span> A calmer machine workflow</p>
+        <h2 id="workflow-title">Design, diagnose, then stitch.</h2>
+        <p>OpenStitch keeps the risky decisions on screen and the final production files on your computer.</p>
       </div>
       <ol class="steps">
-        <li><span>1</span><p>Open a design and choose the physical stitch size.</p></li>
-        <li><span>2</span><p>Adjust fill spacing, max stitch length, fill type, and color flattening.</p></li>
-        <li><span>3</span><p>Preview stitches, jumps, trims, density, and estimated thread usage.</p></li>
-        <li><span>4</span><p>Apply color edits, save the project, and export the PES file locally.</p></li>
+        <li><span>01</span><div><h3>Import</h3><p>Bring in SVG, raster artwork, PDF, EPS, or an existing PES design.</p></div></li>
+        <li><span>02</span><div><h3>Tune</h3><p>Choose physical size, fill behavior, detail preservation, and path planning.</p></div></li>
+        <li><span>03</span><div><h3>Inspect</h3><p>Review every color block, jump, trim, density warning, and thread match.</p></div></li>
+        <li><span>04</span><div><h3>Export</h3><p>Save the project, generate your PES file, and move to the machine with context.</p></div></li>
       </ol>
     </section>
 
-    <section id="run" class="section run-layout">
-      <div>
-        <p class="eyebrow">Run locally</p>
-        <h2>Use the desktop app or local Python server</h2>
+    <section class="section install" id="install">
+      <div class="install-copy">
+        <p class="eyebrow eyebrow-light"><span></span> Run it locally</p>
+        <h2>Your designs stay on your computer.</h2>
         <p>
-          The converter writes files, reads local artwork, and uses Python libraries. GitHub Pages
-          cannot do those backend jobs, so the public site stays lightweight while the real work
-          happens on your computer.
+          This GitHub Pages site is the product guide. Conversion and file access happen in the
+          Windows desktop app or through the local Python interface.
         </p>
+        <a class="button button-light" href="https://github.com/mkjohnson/OpenStitch">Browse the repository <span aria-hidden="true">↗</span></a>
       </div>
-      <div class="command-grid">
-        <article class="command-panel">
-          <h3>Desktop app from source</h3>
-          <pre><code>pip install -r requirements.txt
+      <div class="install-panel">
+        <div class="code-tabs" aria-hidden="true"><span class="active">Desktop</span><span>Local server</span><span>Build</span></div>
+        <pre><code><span class="code-comment"># Run the desktop app from source</span>
+pip install -r requirements.txt
 python app_launcher.py</code></pre>
-        </article>
-        <article class="command-panel">
-          <h3>Browser UI locally</h3>
-          <pre><code>python app.py
-# open http://127.0.0.1:8765/</code></pre>
-        </article>
-        <article class="command-panel">
-          <h3>Build Windows EXE</h3>
-          <pre><code>powershell -ExecutionPolicy Bypass -File .\build_exe.ps1</code></pre>
-          <p class="small">Build output stays local. Do not commit the EXE to GitHub.</p>
-        </article>
+        <div class="install-links">
+          <a href="https://github.com/mkjohnson/OpenStitch#readme">Read setup guide</a>
+          <a href="https://github.com/mkjohnson/OpenStitch/issues">Report an issue</a>
+        </div>
       </div>
-    </section>
-
-    <section id="pages" class="section callout">
-      <div>
-        <p class="eyebrow">GitHub Pages</p>
-        <h2>What this site is</h2>
-        <p>
-          This page is the public front door for OpenStitch: feature overview, screenshots,
-          setup instructions, and a link to the source code. It is not a hosted converter.
-        </p>
-      </div>
-      <a class="button secondary" href="https://github.com/mkjohnson/OpenStitch">Browse the Code</a>
     </section>
   </main>
 
   <footer>
-    <span>OpenStitch is a work in progress. Test carefully before stitching on your machine.</span>
-    <a href="https://github.com/mkjohnson/OpenStitch">github.com/mkjohnson/OpenStitch</a>
+    <div class="footer-brand">
+      <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+      <div><b>OpenStitch</b><span>Local-first embroidery software.</span></div>
+    </div>
+    <p>OpenStitch is a work in progress. Always test carefully before stitching on your machine.</p>
+    <div class="footer-links">
+      <a href="https://github.com/mkjohnson/OpenStitch">GitHub</a>
+      <a href="https://github.com/mkjohnson/OpenStitch/blob/main/LICENSE">License</a>
+      <a href="https://github.com/mkjohnson/OpenStitch/issues">Support</a>
+    </div>
   </footer>
 </body>
 </html>
